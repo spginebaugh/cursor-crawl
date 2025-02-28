@@ -3,12 +3,10 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import { createDependencyMap, updateDependencyMap } from './dependency-mapper';
-import { createSmartSymbolIndex, updateSmartSymbolIndex } from './smart-symbol-index';
-import { DependencyMap } from './types/dependency-map';
-import { SmartSymbolIndex } from './types/smart-symbol-index';
+import { createSymbolIndex, updateSymbolIndex } from './symbol-index';
+import { generateDocstringIndex } from './generate-docstring';
+import { SymbolIndex } from './types/symbol-index';
 import { extractContextFiles, generateRelevantInfo } from './context-extractor';
-import { generateDocstringIndex } from './docstring-generator';
 import { 
 	parseGitignore, 
 	buildTreeFromPaths, 
@@ -123,15 +121,59 @@ export function activate(context: vscode.ExtensionContext) {
 			// Write project tree to file
 			await writeCursorTestFile(rootPath, 'project-tree.mdc', `# Project Tree\n\n\`\`\`\n${treeContent}\`\`\`\n`);
 			
-			// Generate dependency map
-			const dependencyMap = await createDependencyMap(rootPath, ignoredPatterns);
+			// Ask if docstrings should be generated
+			const generateDocstrings = await vscode.window.showQuickPick(
+				[
+					{ label: 'Yes', description: 'Build symbol index and generate docstrings' },
+					{ label: 'No', description: 'Build symbol index only (no AI-generated docstrings)' }
+				],
+				{ placeHolder: 'Would you like to generate docstrings? This requires an OpenAI API key.' }
+			);
 			
-			// Generate smart symbol index
-			await createSmartSymbolIndex(rootPath, ignoredPatterns);
+			if (!generateDocstrings) {
+				return; // User canceled
+			}
 			
-			showInformationMessage('Project analysis completed successfully!');
+			// Generate symbol index
+			await createSymbolIndex(rootPath, ignoredPatterns);
+			
+			// If docstrings are requested, generate them
+			if (generateDocstrings.label === 'Yes') {
+				// Check for OpenAI API key
+				const envVars = loadEnvironmentVars(rootPath);
+				if (!envVars.OPENAI_API_KEY) {
+					const setKey = await vscode.window.showErrorMessage(
+						'OpenAI API key not found. Would you like to set it now?',
+						'Yes', 'No'
+					);
+					
+					if (setKey === 'Yes') {
+						const apiKey = await vscode.window.showInputBox({
+							prompt: 'Enter your OpenAI API Key',
+							password: true,
+							ignoreFocusOut: true
+						});
+						
+						if (apiKey) {
+							await vscode.workspace.getConfiguration('cursorcrawl').update('openaiApiKey', apiKey, vscode.ConfigurationTarget.Global);
+						} else {
+							showInformationMessage('Symbol Index built successfully (without docstrings).');
+							return;
+						}
+					} else {
+						showInformationMessage('Symbol Index built successfully (without docstrings).');
+						return;
+					}
+				}
+				
+				// Generate docstrings
+				await generateDocstringIndex(rootPath, ignoredPatterns);
+				showInformationMessage('Project analysis completed successfully with docstrings!');
+			} else {
+				showInformationMessage('Project analysis completed successfully (without docstrings).');
+			}
 		} catch (error) {
-			console.error('Error generating project tree and dependency map:', error);
+			console.error('Error generating project tree and symbol index:', error);
 			showErrorMessage('Error generating project analysis', error);
 		}
 	});
@@ -151,19 +193,19 @@ export function activate(context: vscode.ExtensionContext) {
 		
 		vscode.window.withProgress({
 			location: vscode.ProgressLocation.Notification,
-			title: 'Building Smart Symbol Index',
+			title: 'Building Symbol Index',
 			cancellable: false
 		}, async (progress) => {
 			try {
 				progress.report({ message: 'Analyzing project structure...' });
 				
-				// Create the smart symbol index
-				await createSmartSymbolIndex(rootPath, ignoredPatterns);
+				// Create the symbol index without docstrings
+				await createSymbolIndex(rootPath, ignoredPatterns, progress);
 				
-				showInformationMessage('Smart Symbol Index built successfully.');
+				showInformationMessage('Symbol Index built successfully (without docstrings).');
 			} catch (error) {
-				console.error('Error building smart symbol index:', error);
-				showErrorMessage('Error building smart symbol index', error);
+				console.error('Error building symbol index:', error);
+				showErrorMessage('Error building symbol index', error);
 			}
 		});
 	});
@@ -183,8 +225,23 @@ export function activate(context: vscode.ExtensionContext) {
 			return;
 		}
 		
-		// Get ignored patterns from .gitignore
-		const ignoredPatterns = await parseGitignore(workspaceFolder);
+		// Check if symbol index exists
+		const cursorTestDir = path.join(workspaceFolder, '.cursortest');
+		const symbolIndexPath = path.join(cursorTestDir, 'symbol-index.json');
+		
+		if (!await fs.pathExists(symbolIndexPath)) {
+			const response = await vscode.window.showErrorMessage(
+				'Symbol index not found. Would you like to build the symbol index first?',
+				'Yes', 'No'
+			);
+			
+			if (response === 'Yes') {
+				// Run build symbol index first
+				await vscode.commands.executeCommand('cursorcrawl.buildSymbolIndex');
+			} else {
+				return;
+			}
+		}
 		
 		vscode.window.withProgress({
 			location: vscode.ProgressLocation.Notification,
@@ -192,12 +249,13 @@ export function activate(context: vscode.ExtensionContext) {
 			cancellable: false
 		}, async (progress) => {
 			try {
-				// Initial status message is now set inside the generateDocstringIndex function
+				// Get ignored patterns from .gitignore
+				const ignoredPatterns = await parseGitignore(workspaceFolder);
 				
-				// Generate the docstring index - pass the progress object
+				// Generate docstrings for the existing symbol index
 				await generateDocstringIndex(workspaceFolder, ignoredPatterns, progress);
 				
-				showInformationMessage('Docstring Index generated successfully.');
+				showInformationMessage('Docstrings generated successfully.');
 			} catch (error) {
 				console.error('Error generating docstring index:', error);
 				showErrorMessage('Error generating docstring index', error);
@@ -213,14 +271,13 @@ export function activate(context: vscode.ExtensionContext) {
 			return;
 		}
 
-		// Check if dependency map and symbol index exist
+		// Check if symbol index exists
 		const cursorTestDir = path.join(workspaceFolder, '.cursortest');
-		const dependencyMapPath = path.join(cursorTestDir, 'dependency-map.json');
-		const symbolIndexPath = path.join(cursorTestDir, 'smart-symbol-index.json');
+		const symbolIndexPath = path.join(cursorTestDir, 'symbol-index.json');
 		
-		if (!await fs.pathExists(dependencyMapPath) || !await fs.pathExists(symbolIndexPath)) {
+		if (!await fs.pathExists(symbolIndexPath)) {
 			const response = await vscode.window.showErrorMessage(
-				'Dependency map or symbol index not found. Would you like to run analysis first?',
+				'Symbol index not found. Would you like to run analysis first?',
 				'Yes', 'No'
 			);
 			
@@ -295,10 +352,8 @@ export function activate(context: vscode.ExtensionContext) {
 
 		const watcher = vscode.workspace.createFileSystemWatcher('**/*', false, false, false);
 		
-		// Shared dependency map state for incremental updates
-		let dependencyMapCache: DependencyMap | null = null;
 		// Shared symbol index state for incremental updates
-		let symbolIndexCache: SmartSymbolIndex | null = null;
+		let symbolIndexCache: SymbolIndex | null = null;
 		
 		// Debounce to avoid too many updates
 		let debounceTimer: NodeJS.Timeout | null = null;
@@ -321,24 +376,10 @@ export function activate(context: vscode.ExtensionContext) {
 					// Write project tree to file
 					await writeCursorTestFile(workspaceFolder, 'project-tree.mdc', `# Project Tree\n\n\`\`\`\n${treeContent}\`\`\`\n`);
 					
-					// Update dependency map
-					// If we have a dependency map cache and a specific file changed, do incremental update
-					if (dependencyMapCache && changedFile) {
-						dependencyMapCache = await updateDependencyMap(
-							workspaceFolder, 
-							dependencyMapCache, 
-							changedFile,
-							ignoredPatterns
-						);
-					} else {
-						// Otherwise do a full rebuild
-						dependencyMapCache = await createDependencyMap(workspaceFolder, ignoredPatterns);
-					}
-					
-					// Update smart symbol index
+					// Update symbol index
 					// If we have a symbol index cache and a specific file changed, do incremental update
 					if (symbolIndexCache && changedFile) {
-						symbolIndexCache = await updateSmartSymbolIndex(
+						symbolIndexCache = await updateSymbolIndex(
 							workspaceFolder,
 							symbolIndexCache,
 							changedFile,
@@ -346,7 +387,7 @@ export function activate(context: vscode.ExtensionContext) {
 						);
 					} else {
 						// Otherwise do a full rebuild
-						symbolIndexCache = await createSmartSymbolIndex(workspaceFolder, ignoredPatterns);
+						symbolIndexCache = await createSymbolIndex(workspaceFolder, ignoredPatterns);
 					}
 					
 					console.log('Project analysis updated automatically.');

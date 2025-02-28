@@ -2,7 +2,7 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import * as ts from 'typescript';
 import { FileDependencyInfo, DependencyMap } from './types/dependency-map';
-import { SymbolInfo, SmartSymbolIndex } from './types/smart-symbol-index';
+import { SymbolIndexEntry, SymbolIndex } from './types/symbol-index';
 import { RelevantInfo } from './types/relevant-info';
 import { 
   isAnalyzableFile, 
@@ -120,68 +120,82 @@ export const filterDependencyMap = (
  * @returns Filtered symbol index
  */
 export const filterSymbolIndex = (
-  symbolIndex: SmartSymbolIndex,
+  symbolIndex: SymbolIndex,
   contextFiles: string[]
-): SmartSymbolIndex => {
+): SymbolIndex => {
   const relevantFiles = new Set<string>(contextFiles);
-  const result: SmartSymbolIndex = { symbols: {} };
+  const result: SymbolIndex = {};
   
   // First pass: include symbols defined in context files
-  for (const symbolId in symbolIndex.symbols) {
-    const symbol = symbolIndex.symbols[symbolId];
-    
-    if (contextFiles.includes(symbol.file)) {
-      result.symbols[symbolId] = {
+  for (const filePath in symbolIndex) {
+    if (contextFiles.includes(filePath)) {
+      result[filePath] = symbolIndex[filePath].map(symbol => ({
         ...symbol,
-        references: {},
-        calls: []
-      };
+        dependents: [],
+        depends_on: []
+      }));
     }
   }
   
   // Second pass: include symbols that are referenced by symbols in context files
-  for (const symbolId in symbolIndex.symbols) {
-    const symbol = symbolIndex.symbols[symbolId];
-    
-    // Track symbols called by symbols in context files
-    if (contextFiles.includes(symbol.file)) {
-      result.symbols[symbolId].calls = symbol.calls.filter(call => {
-        // Find the symbol by name
-        const calledSymbolId = Object.keys(symbolIndex.symbols).find(id => 
-          symbolIndex.symbols[id].name === call.symbolName
-        );
-        
-        if (calledSymbolId) {
-          const calledSymbol = symbolIndex.symbols[calledSymbolId];
-          
-          // Add this file to our relevant files if it's not already there
-          relevantFiles.add(calledSymbol.file);
-          
-          // Add the called symbol to our result if it's not already there
-          if (!result.symbols[calledSymbolId]) {
-            result.symbols[calledSymbolId] = {
-              ...calledSymbol,
-              references: {},
-              calls: []
-            };
+  for (const filePath in symbolIndex) {
+    if (contextFiles.includes(filePath)) {
+      for (const symbol of symbolIndex[filePath]) {
+        const resultSymbol = result[filePath].find(s => s.name === symbol.name);
+        if (resultSymbol) {
+          // Collect symbols that this symbol depends on
+          for (const dependency of symbol.depends_on) {
+            // Find the file path containing the referenced symbol
+            for (const otherFilePath in symbolIndex) {
+              const referencedSymbol = symbolIndex[otherFilePath].find(
+                s => s.name === dependency.name
+              );
+              
+              if (referencedSymbol) {
+                // Add this file to our relevant files
+                relevantFiles.add(otherFilePath);
+                
+                // Add the file to our result if it's not already there
+                if (!result[otherFilePath]) {
+                  result[otherFilePath] = [];
+                }
+                
+                // Add the referenced symbol to our result if it's not already there
+                if (!result[otherFilePath].find(s => s.name === referencedSymbol.name)) {
+                  result[otherFilePath].push({
+                    ...referencedSymbol,
+                    dependents: [],
+                    depends_on: []
+                  });
+                }
+                
+                // Add the dependency to our symbol
+                resultSymbol.depends_on.push(dependency);
+                break;
+              }
+            }
           }
-          
-          return true;
         }
-        
-        return false;
-      });
+      }
     }
   }
   
   // Third pass: include references to symbols defined in context files
-  for (const symbolId in result.symbols) {
-    const originalSymbol = symbolIndex.symbols[symbolId];
-    
-    // Filter references to only include those from relevant files
-    for (const referencingFile in originalSymbol.references) {
-      if (relevantFiles.has(referencingFile)) {
-        result.symbols[symbolId].references[referencingFile] = originalSymbol.references[referencingFile];
+  for (const filePath in result) {
+    for (const symbol of result[filePath]) {
+      // Find the original symbol
+      const originalFilePath = Object.keys(symbolIndex).find(path => 
+        symbolIndex[path].some(s => s.name === symbol.name)
+      );
+      
+      if (originalFilePath) {
+        const originalSymbol = symbolIndex[originalFilePath].find(s => s.name === symbol.name);
+        if (originalSymbol) {
+          // Process dependents
+          symbol.dependents = originalSymbol.dependents.filter(dependent => 
+            relevantFiles.has(dependent.filePath)
+          );
+        }
       }
     }
   }
@@ -213,8 +227,8 @@ export const generateRelevantInfo = async (
   }
   
   // Load symbol index
-  const symbolIndexPath = path.join(cursorTestDir, 'smart-symbol-index.json');
-  let symbolIndex: SmartSymbolIndex = { symbols: {} };
+  const symbolIndexPath = path.join(cursorTestDir, 'symbol-index.json');
+  let symbolIndex: SymbolIndex = {};
   
   try {
     const symbolIndexContent = await fs.readFile(symbolIndexPath, 'utf8');
@@ -251,7 +265,7 @@ export const generateRelevantInfo = async (
     
     // Add symbols to the relevant info
     fileSymbols.forEach(symbol => {
-      const symbolId = `${symbol.file}:${symbol.name}`;
+      const symbolId = `${symbol.filePath}:${symbol.name}`;
       relevantInfo.symbols.symbols[symbolId] = symbol;
     });
     
@@ -307,15 +321,14 @@ const findFilesMatchingPattern = async (rootPath: string, pattern: string): Prom
 const extractRelevantSymbols = async (
   rootPath: string,
   filePath: string,
-  symbolIndex: SmartSymbolIndex,
-): Promise<SymbolInfo[]> => {
+  symbolIndex: SymbolIndex,
+): Promise<SymbolIndexEntry[]> => {
   const normalizedPath = normalizeFilePath(filePath, rootPath);
   
-  // Convert the symbols object to an array of SymbolInfo objects
-  const symbolInfoArray = Object.values(symbolIndex.symbols);
+  // Get symbols for the specified file
+  const fileSymbols = symbolIndex[normalizedPath] || [];
   
-  // Filter symbols that are defined in the specified file
-  return symbolInfoArray.filter(symbol => normalizeFilePath(symbol.file, rootPath) === normalizedPath);
+  return fileSymbols;
 };
 
 // Function to extract dependencies and imports for a file

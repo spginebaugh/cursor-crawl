@@ -26,7 +26,7 @@
       },
       {
         "command": "cursorcrawl.buildSymbolIndex",
-        "title": "Build Smart Symbol Index"
+        "title": "Build Symbol Index (No Docstrings)"
       },
       {
         "command": "cursorcrawl.extractContext",
@@ -34,7 +34,7 @@
       },
       {
         "command": "cursorcrawl.generateDocstringIndex",
-        "title": "Generate Docstring Index"
+        "title": "Generate Docstrings for Symbol Index"
       }
     ],
     "configuration": {

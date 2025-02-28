@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as dotenv from 'dotenv';
 import OpenAI from 'openai';
 import * as vscode from 'vscode';
-import { DocstringInfo } from '../types/docstring-index';
+import { SymbolIndexEntry } from '../types/symbol-index';
 import { zodResponseFormat } from 'openai/helpers/zod';
 import { z } from 'zod';
 
@@ -18,7 +18,7 @@ export interface DocstringOutput {
   docstrings: Array<{
     name: string;
     docstring: string;
-    type: 'function' | 'class' | 'interface' | 'type' | 'variable' | 'other';
+    type: 'function' | 'class' | 'interface' | 'type' | 'variable' | 'method' | 'enum' | 'other';
     line: number;
   }>;
 }
@@ -28,7 +28,7 @@ const DocstringSchema = z.object({
   docstrings: z.array(
     z.object({
       name: z.string().describe('The name of the function/method'),
-      type: z.enum(['function', 'class', 'interface', 'type', 'variable', 'other']).describe('The type of the node (function, class, etc.)'),
+      type: z.enum(['function', 'class', 'interface', 'type', 'variable', 'method', 'enum', 'other']).describe('The type of the node (function, class, etc.)'),
       line: z.number().describe('The line number where the node starts'),
       docstring: z.string().describe('The generated JSDoc comment block')
     })
@@ -92,7 +92,7 @@ export const generateDocstringsStructured = async (
   fileContent: string,
   nodes: Array<{
     name: string;
-    type: DocstringInfo['type'];
+    type: SymbolIndexEntry['type'];
     location: { line: number; character: number };
     snippet: string;
   }>

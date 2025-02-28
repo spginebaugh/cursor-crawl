@@ -28,6 +28,6 @@ export interface RelevantInfo {
   contextFiles: string[];
 }
 
-// Re-export types from dependency-map and smart-symbol-index to avoid circular dependencies
+// Import types from the new consolidated type files
 import { FileDependencyInfo } from './dependency-map';
-import { SymbolInfo } from './smart-symbol-index'; 
+import { SymbolIndexEntry as SymbolInfo } from './symbol-index'; 

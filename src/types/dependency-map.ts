@@ -1,5 +1,13 @@
 /**
- * Represents the entire dependency map for a project
+ * Re-exports from symbol-index.ts for compatibility
+ * The symbol-index now includes dependency information
+ */
+
+import { SymbolIndex } from './symbol-index';
+
+/**
+ * @deprecated Use the SymbolIndex type from './symbol-index' instead
+ * which combines symbol and dependency information
  */
 export interface DependencyMap {
   /**
@@ -9,7 +17,7 @@ export interface DependencyMap {
 }
 
 /**
- * Represents dependency information for a single file
+ * @deprecated Use SymbolIndexEntry[] from './symbol-index' instead
  */
 export interface FileDependencyInfo {
   /**
@@ -24,7 +32,7 @@ export interface FileDependencyInfo {
 }
 
 /**
- * Represents a specific import relationship
+ * @deprecated Use DependencyInfo/DependentInfo from './symbol-index'
  */
 export interface ImportInfo {
   /**
