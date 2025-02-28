@@ -11,6 +11,9 @@
   ],
   "activationEvents": [
     "onCommand:cursorcrawl.analyze",
+    "onCommand:cursorcrawl.buildSymbolIndex",
+    "onCommand:cursorcrawl.extractContext",
+    "onCommand:cursorcrawl.generateDocstringIndex",
     "onStartupFinished",
     "workspaceContains:**/*"
   ],
@@ -20,8 +23,30 @@
       {
         "command": "cursorcrawl.analyze",
         "title": "Analyze Codebase"
+      },
+      {
+        "command": "cursorcrawl.buildSymbolIndex",
+        "title": "Build Smart Symbol Index"
+      },
+      {
+        "command": "cursorcrawl.extractContext",
+        "title": "Extract Context from Prompt"
+      },
+      {
+        "command": "cursorcrawl.generateDocstringIndex",
+        "title": "Generate Docstring Index"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "CursorCrawl",
+      "properties": {
+        "cursorcrawl.openaiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI API Key for generating docstrings"
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
@@ -52,7 +77,9 @@
   },
   "dependencies": {
     "@babel/parser": "^7.26.9",
+    "dotenv": "^16.4.7",
     "fs-extra": "^11.3.0",
+    "openai": "^4.86.1",
     "typescript": "^5.7.3"
   }
 }

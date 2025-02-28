@@ -6,7 +6,11 @@ import * as path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { createDependencyMap, updateDependencyMap } from './dependency-mapper';
+import { createSmartSymbolIndex, updateSmartSymbolIndex } from './smart-symbol-index';
 import { DependencyMap } from './types/dependency-map';
+import { SmartSymbolIndex } from './types/smart-symbol-index';
+import { extractContextFiles, generateRelevantInfo } from './context-extractor';
+import { generateDocstringIndex, loadEnvironmentVars } from './docstring-generator';
 
 const execAsync = promisify(exec);
 
@@ -176,17 +180,172 @@ export function activate(context: vscode.ExtensionContext) {
 			
 			// Generate dependency map
 			const dependencyMap = await createDependencyMap(rootPath, ignoredPatterns);
+			
+			// Write dependency map to file
 			const dependencyMapPath = path.join(cursorTestDir, 'dependency-map.json');
 			await fs.writeFile(dependencyMapPath, JSON.stringify(dependencyMap, null, 2), 'utf8');
 			
-			vscode.window.showInformationMessage('Project tree and dependency map generated successfully!');
+			// Generate smart symbol index
+			await createSmartSymbolIndex(rootPath, ignoredPatterns);
 			
-			// Open the project tree file in the editor
-			const document = await vscode.workspace.openTextDocument(vscode.Uri.file(projectTreePath));
-			await vscode.window.showTextDocument(document);
+			vscode.window.showInformationMessage('Project analysis completed successfully!');
 		} catch (error) {
 			console.error('Error generating project tree and dependency map:', error);
 			vscode.window.showErrorMessage(`Error generating project analysis: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	});
+
+	// Register the build symbol index command
+	const buildSymbolIndexCommand = vscode.commands.registerCommand('cursorcrawl.buildSymbolIndex', async () => {
+		const workspaceFolders = vscode.workspace.workspaceFolders;
+		if (!workspaceFolders) {
+			vscode.window.showErrorMessage('No workspace folder open.');
+			return;
+		}
+		
+		const rootPath = workspaceFolders[0].uri.fsPath;
+		
+		// Get ignored patterns from .gitignore
+		const ignoredPatterns = await parseGitignore(rootPath);
+		
+		vscode.window.withProgress({
+			location: vscode.ProgressLocation.Notification,
+			title: 'Building Smart Symbol Index',
+			cancellable: false
+		}, async (progress) => {
+			try {
+				progress.report({ message: 'Analyzing project structure...' });
+				
+				// Create the smart symbol index
+				await createSmartSymbolIndex(rootPath, ignoredPatterns);
+				
+				vscode.window.showInformationMessage('Smart Symbol Index built successfully.');
+			} catch (error) {
+				console.error('Error building smart symbol index:', error);
+				vscode.window.showErrorMessage(`Error building smart symbol index: ${error}`);
+			}
+		});
+	});
+
+	// Register the generate docstring index command
+	const generateDocstringIndexCommand = vscode.commands.registerCommand('cursorcrawl.generateDocstringIndex', async () => {
+		const workspaceFolders = vscode.workspace.workspaceFolders;
+		if (!workspaceFolders) {
+			vscode.window.showErrorMessage('No workspace folder open.');
+			return;
+		}
+		
+		const rootPath = workspaceFolders[0].uri.fsPath;
+		
+		// Load environment variables
+		const envVars = loadEnvironmentVars(rootPath);
+		if (!envVars.OPENAI_API_KEY) {
+			vscode.window.showErrorMessage('OpenAI API key not found. Please set it in .env.local or in settings.');
+			return;
+		}
+		
+		// Get ignored patterns from .gitignore
+		const ignoredPatterns = await parseGitignore(rootPath);
+		
+		vscode.window.withProgress({
+			location: vscode.ProgressLocation.Notification,
+			title: 'Generating Docstring Index',
+			cancellable: false
+		}, async (progress) => {
+			try {
+				progress.report({ message: 'Analyzing project structure...' });
+				
+				// Generate the docstring index
+				await generateDocstringIndex(rootPath, ignoredPatterns);
+				
+				vscode.window.showInformationMessage('Docstring Index generated successfully.');
+			} catch (error) {
+				console.error('Error generating docstring index:', error);
+				vscode.window.showErrorMessage(`Error generating docstring index: ${error}`);
+			}
+		});
+	});
+
+	// Register the extract context command
+	const extractContextCommand = vscode.commands.registerCommand('cursorcrawl.extractContext', async () => {
+		const workspaceFolders = vscode.workspace.workspaceFolders;
+		if (!workspaceFolders) {
+			vscode.window.showErrorMessage('No workspace folder found. Please open a folder first.');
+			return;
+		}
+
+		const rootPath = workspaceFolders[0].uri.fsPath;
+		
+		// Check if dependency map and symbol index exist
+		const cursorTestDir = path.join(rootPath, '.cursortest');
+		const dependencyMapPath = path.join(cursorTestDir, 'dependency-map.json');
+		const symbolIndexPath = path.join(cursorTestDir, 'smart-symbol-index.json');
+		
+		if (!await fs.pathExists(dependencyMapPath) || !await fs.pathExists(symbolIndexPath)) {
+			const response = await vscode.window.showErrorMessage(
+				'Dependency map or symbol index not found. Would you like to run analysis first?',
+				'Yes', 'No'
+			);
+			
+			if (response === 'Yes') {
+				// Run analysis first
+				await vscode.commands.executeCommand('cursorcrawl.analyze');
+			} else {
+				return;
+			}
+		}
+		
+		// Show input box for the prompt
+		const promptText = await vscode.window.showInputBox({
+			placeHolder: 'Enter your prompt with file references using @filename.ts syntax',
+			prompt: 'Files referenced with @ will be included as context',
+			ignoreFocusOut: true
+		});
+		
+		if (!promptText) {
+			return; // User cancelled
+		}
+		
+		try {
+			// Show progress indicator
+			await vscode.window.withProgress(
+				{
+					location: vscode.ProgressLocation.Notification,
+					title: "Extracting Context Information",
+					cancellable: false
+				},
+				async (progress) => {
+					progress.report({ message: "Identifying referenced files..." });
+					
+					// Extract context files from the prompt
+					const contextFiles = extractContextFiles(promptText);
+					
+					if (contextFiles.length === 0) {
+						vscode.window.showInformationMessage('No file references found in prompt. Please use @filename.ts syntax to reference files.');
+						return;
+					}
+					
+					progress.report({ message: `Found ${contextFiles.length} referenced files. Generating relevant information...` });
+					
+					// Generate the relevant-info.json file
+					await generateRelevantInfo(rootPath, contextFiles);
+					
+					progress.report({ message: "Context information extracted successfully!" });
+					
+					// Show the relevant files that were found
+					vscode.window.showInformationMessage(
+						`Successfully extracted context for ${contextFiles.length} files: ${contextFiles.slice(0, 3).join(', ')}${contextFiles.length > 3 ? '...' : ''}`
+					);
+					
+					// Open the relevant-info.json file in the editor
+					const relevantInfoPath = path.join(cursorTestDir, 'relevant-info.json');
+					const document = await vscode.workspace.openTextDocument(relevantInfoPath);
+					await vscode.window.showTextDocument(document);
+				}
+			);
+		} catch (error) {
+			console.error('Error extracting context information:', error);
+			vscode.window.showErrorMessage(`Error extracting context information: ${error instanceof Error ? error.message : String(error)}`);
 		}
 	});
 
@@ -202,6 +361,8 @@ export function activate(context: vscode.ExtensionContext) {
 		
 		// Shared dependency map state for incremental updates
 		let dependencyMapCache: DependencyMap | null = null;
+		// Shared symbol index state for incremental updates
+		let symbolIndexCache: SmartSymbolIndex | null = null;
 		
 		// Debounce to avoid too many updates
 		let debounceTimer: NodeJS.Timeout | null = null;
@@ -245,6 +406,22 @@ export function activate(context: vscode.ExtensionContext) {
 					// Write updated dependency map to file
 					await fs.writeFile(dependencyMapPath, JSON.stringify(dependencyMapCache, null, 2), 'utf8');
 					
+					// Update smart symbol index
+					const symbolIndexPath = path.join(cursorTestDir, 'smart-symbol-index.json');
+					
+					// If we have a symbol index cache and a specific file changed, do incremental update
+					if (symbolIndexCache && changedFile) {
+						symbolIndexCache = await updateSmartSymbolIndex(
+							rootPath,
+							symbolIndexCache,
+							changedFile,
+							ignoredPatterns
+						);
+					} else {
+						// Otherwise do a full rebuild
+						symbolIndexCache = await createSmartSymbolIndex(rootPath, ignoredPatterns);
+					}
+					
 					console.log('Project analysis updated automatically.');
 				} catch (error) {
 					console.error('Error updating project analysis:', error);
@@ -265,8 +442,11 @@ export function activate(context: vscode.ExtensionContext) {
 	
 	// Initialize watcher when extension is activated
 	setupFileWatcher();
-	
+
 	context.subscriptions.push(analyzeCommand);
+	context.subscriptions.push(buildSymbolIndexCommand);
+	context.subscriptions.push(generateDocstringIndexCommand);
+	context.subscriptions.push(extractContextCommand);
 }
 
 // This method is called when your extension is deactivated
