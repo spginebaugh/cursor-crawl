@@ -8,7 +8,7 @@ import { createSmartSymbolIndex, updateSmartSymbolIndex } from './smart-symbol-i
 import { DependencyMap } from './types/dependency-map';
 import { SmartSymbolIndex } from './types/smart-symbol-index';
 import { extractContextFiles, generateRelevantInfo } from './context-extractor';
-import { generateDocstringIndex } from './modules/docstring-generator';
+import { generateDocstringIndex } from './docstring-generator';
 import { 
 	parseGitignore, 
 	buildTreeFromPaths, 
@@ -192,10 +192,10 @@ export function activate(context: vscode.ExtensionContext) {
 			cancellable: false
 		}, async (progress) => {
 			try {
-				progress.report({ message: 'Analyzing project structure...' });
+				// Initial status message is now set inside the generateDocstringIndex function
 				
-				// Generate the docstring index
-				await generateDocstringIndex(workspaceFolder, ignoredPatterns);
+				// Generate the docstring index - pass the progress object
+				await generateDocstringIndex(workspaceFolder, ignoredPatterns, progress);
 				
 				showInformationMessage('Docstring Index generated successfully.');
 			} catch (error) {

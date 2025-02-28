@@ -3,10 +3,38 @@ import * as path from 'path';
 import * as dotenv from 'dotenv';
 import OpenAI from 'openai';
 import * as vscode from 'vscode';
+import { DocstringInfo } from '../types/docstring-index';
+import { zodResponseFormat } from 'openai/helpers/zod';
+import { z } from 'zod';
 
 interface EnvVars {
   OPENAI_API_KEY?: string;
 }
+
+const openaiModel = 'o3-mini';
+
+// Define structured output schema for OpenAI response
+export interface DocstringOutput {
+  docstrings: Array<{
+    name: string;
+    docstring: string;
+    type: 'function' | 'class' | 'interface' | 'type' | 'variable' | 'other';
+    line: number;
+  }>;
+}
+
+// Define Zod schema for the docstring response
+const DocstringSchema = z.object({
+  docstrings: z.array(
+    z.object({
+      name: z.string().describe('The name of the function/method'),
+      type: z.enum(['function', 'class', 'interface', 'type', 'variable', 'other']).describe('The type of the node (function, class, etc.)'),
+      line: z.number().describe('The line number where the node starts'),
+      docstring: z.string().describe('The generated JSDoc comment block')
+    })
+  )
+});
+
 
 /**
  * Loads environment variables from .env.local file
@@ -53,43 +81,86 @@ export const createOpenAIClient = (apiKey?: string): OpenAI | undefined => {
 };
 
 /**
- * Generates a docstring for a function or class using OpenAI
+ * Generates docstrings for multiple code elements in a file using OpenAI
  * @param client - The OpenAI API client
- * @param codeSnippet - The code snippet to generate a docstring for
- * @param functionName - The name of the function or class
- * @returns The generated docstring
+ * @param fileContent - The complete file content
+ * @param nodes - Information about the nodes that need docstrings
+ * @returns Object containing generated docstrings for each node
  */
+export const generateDocstringsStructured = async (
+  client: OpenAI,
+  fileContent: string,
+  nodes: Array<{
+    name: string;
+    type: DocstringInfo['type'];
+    location: { line: number; character: number };
+    snippet: string;
+  }>
+): Promise<DocstringOutput> => {
+  try {
+    const prompt = `I need JSDoc style docstrings for specific declarations in this TypeScript file. 
+Here's the complete file content for context:
+
+\`\`\`typescript
+${fileContent}
+\`\`\`
+
+Generate docstrings for the following declarations (identified by name, type, and line number):
+${JSON.stringify(nodes, null, 2)}
+
+For each declaration, provide a comprehensive docstring that explains what it does, its parameters, return type, and possible errors.
+Be concise but complete. Return the docstrings as structured data.`;
+
+    // Use the parse method with zodResponseFormat instead of regular chat completion
+    const completion = await client.beta.chat.completions.parse({
+      model: openaiModel,
+      messages: [
+        { 
+          role: 'system', 
+          content: 'You are a helpful assistant that generates high-quality TypeScript docstrings.' 
+        },
+        { role: 'user', content: prompt }
+      ],
+      response_format: zodResponseFormat(DocstringSchema, "response"),
+    });
+
+    // Extract the parsed result which is already validated against the schema
+    const result = completion.choices[0].message.parsed;
+    return result as DocstringOutput;
+
+  } catch (error) {
+    console.error('Error generating structured docstrings:', error);
+    // Return empty docstrings if API call fails
+    return {
+      docstrings: nodes.map(node => ({
+        name: node.name,
+        type: node.type,
+        line: node.location.line,
+        docstring: `/**\n * ${node.name}\n */`
+      }))
+    };
+  }
+};
+
+// Keep the original function for backward compatibility
+// but implement it in terms of the new structured function
 export const generateDocstring = async (
   client: OpenAI,
   codeSnippet: string,
   functionName: string
 ): Promise<string> => {
   try {
-    const prompt = `Generate a comprehensive JSDoc style docstring for the following TypeScript code. 
-Focus on explaining what the function/class does, all parameters, return type, and possible errors.
-Be concise but complete.
+    const result = await generateDocstringsStructured(client, codeSnippet, [{
+      name: functionName,
+      type: 'function', // Assume function as default type
+      location: { line: 1, character: 0 },
+      snippet: codeSnippet
+    }]);
 
-Code:
-\`\`\`typescript
-${codeSnippet}
-\`\`\`
-
-Return only the JSDoc comment block (with /** and */), nothing else.`;
-
-    const response = await client.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages: [
-        { role: 'system', content: 'You are a helpful assistant that generates high-quality TypeScript docstrings.' },
-        { role: 'user', content: prompt }
-      ],
-      temperature: 0.2,
-      max_tokens: 500,
-    });
-
-    const content = response.choices[0]?.message.content?.trim() || '';
-    return content;
+    const docstring = result.docstrings[0]?.docstring || `/**\n * ${functionName}\n */`;
+    return docstring;
   } catch (error) {
-    console.error('Error generating docstring:', error);
+    console.error(`Error generating docstring for ${functionName}:`, error);
     return `/**\n * ${functionName}\n */`;
   }
 };

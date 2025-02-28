@@ -1,14 +1,9 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import * as dotenv from 'dotenv';
 import OpenAI from 'openai';
-import * as vscode from 'vscode';
 import * as ts from 'typescript';
 import { DocstringInfo, DocstringIndex } from './types/docstring-index';
 import { 
-  ANALYZABLE_EXTENSIONS, 
-  ALWAYS_IGNORED_DIRS, 
-  MAX_FILES_TO_PROCESS,
   normalizeFilePath,
   isAnalyzableFile,
   getProjectFiles 
@@ -16,7 +11,7 @@ import {
 import { 
   loadEnvironmentVars, 
   createOpenAIClient, 
-  generateDocstring as generateDocstringWithAI 
+  generateDocstringsStructured,
 } from './utils/openai';
 import { 
   extractCodeSnippet, 
@@ -24,55 +19,12 @@ import {
 } from './utils/ts-analyzer';
 import { 
   writeCursorTestFile, 
-  ensureCursorTestDir 
 } from './utils/workspace';
 
 // Load environment variables from .env.local
 interface EnvVars {
   OPENAI_API_KEY?: string;
 }
-
-/**
- * Generates a docstring for a function or class using OpenAI
- * @param client - The OpenAI API client
- * @param codeSnippet - The code snippet to generate a docstring for
- * @param functionName - The name of the function or class
- * @returns The generated docstring
- */
-export const generateDocstring = async (
-  client: OpenAI,
-  codeSnippet: string,
-  functionName: string
-): Promise<string> => {
-  try {
-    const prompt = `Generate a comprehensive JSDoc style docstring for the following TypeScript code. 
-Focus on explaining what the function/class does, all parameters, return type, and possible errors.
-Be concise but complete.
-
-Code:
-\`\`\`typescript
-${codeSnippet}
-\`\`\`
-
-Return only the JSDoc comment block (with /** and */), nothing else.`;
-
-    const response = await client.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages: [
-        { role: 'system', content: 'You are a helpful assistant that generates high-quality TypeScript docstrings.' },
-        { role: 'user', content: prompt }
-      ],
-      temperature: 0.2,
-      max_tokens: 500,
-    });
-
-    const docstring = response.choices[0]?.message.content?.trim() || '';
-    return docstring;
-  } catch (error) {
-    console.error(`Error generating docstring for ${functionName}:`, error);
-    return `/**\n * ${functionName}\n */`;
-  }
-};
 
 /**
  * Gets node type as a string
@@ -118,10 +70,18 @@ const getNodeName = (node: ts.Node): string => {
  * Extracts all documentable nodes from a TypeScript source file
  * @param sourceFile - The TypeScript source file
  * @param filePath - The path to the source file
+ * @param rootPath - The root path of the project for normalizing file paths
  * @returns An array of docstring info objects
  */
-const extractDocumentableNodes = (sourceFile: ts.SourceFile, filePath: string): DocstringInfo[] => {
+const extractDocumentableNodes = (
+  sourceFile: ts.SourceFile, 
+  filePath: string,
+  rootPath: string
+): DocstringInfo[] => {
   const nodes: DocstringInfo[] = [];
+  
+  // Normalize the file path relative to the project root
+  const normalizedPath = normalizeFilePath(filePath, rootPath);
   
   function visit(node: ts.Node) {
     // Skip nodes that already have documentation comments
@@ -154,7 +114,7 @@ const extractDocumentableNodes = (sourceFile: ts.SourceFile, filePath: string): 
       
       nodes.push({
         name,
-        filePath,
+        filePath: normalizedPath,
         docstring: '', // To be filled in later
         type: nodeType,
         snippet,
@@ -170,14 +130,63 @@ const extractDocumentableNodes = (sourceFile: ts.SourceFile, filePath: string): 
 };
 
 /**
+ * Generates docstrings for a file using OpenAI structured output
+ * @param client - The OpenAI API client
+ * @param filePath - Path to the file
+ * @param fileContent - Content of the file
+ * @param docNodes - List of documentable nodes found in the file
+ * @returns Array of docstring info objects
+ */
+export const generateDocstringsForFileContent = async (
+  client: OpenAI,
+  filePath: string,
+  fileContent: string,
+  docNodes: DocstringInfo[]
+): Promise<DocstringInfo[]> => {
+  try {
+    // Extract node information to pass to the model
+    const nodeInfos = docNodes.map(node => ({
+      name: node.name,
+      type: node.type,
+      location: node.location,
+      snippet: node.snippet,
+    }));
+    
+    // Generate docstrings using the structured approach
+    const output = await generateDocstringsStructured(client, fileContent, nodeInfos);
+    
+    // Map the output back to our DocstringInfo format
+    return docNodes.map(node => {
+      const generatedDocstring = output.docstrings.find(
+        ds => ds.name === node.name && ds.type === node.type
+      );
+      
+      return {
+        ...node,
+        docstring: generatedDocstring?.docstring || `/**\n * ${node.name}\n */`
+      };
+    });
+  } catch (error) {
+    console.error(`Error generating docstrings for file ${filePath}:`, error);
+    // Return default placeholder docstrings if API call fails
+    return docNodes.map(node => ({
+      ...node,
+      docstring: `/**\n * ${node.name}\n */`
+    }));
+  }
+};
+
+/**
  * Generates docstrings for all applicable nodes in a file
  * @param filePath - The path to the file
  * @param client - The OpenAI API client
+ * @param rootPath - The root path of the project
  * @returns An array of docstring info objects
  */
 export const generateDocstringsForFile = async (
   filePath: string,
-  client: OpenAI
+  client: OpenAI,
+  rootPath: string
 ): Promise<DocstringInfo[]> => {
   try {
     // Skip files that aren't TypeScript/JavaScript
@@ -193,18 +202,15 @@ export const generateDocstringsForFile = async (
       true
     );
     
-    const nodes = extractDocumentableNodes(sourceFile, filePath);
+    const nodes = extractDocumentableNodes(sourceFile, filePath, rootPath);
     
-    // Generate docstrings for each node
-    const docstringPromises = nodes.map(async (node) => {
-      const docstring = await generateDocstringWithAI(client, node.snippet, node.name);
-      return {
-        ...node,
-        docstring
-      };
-    });
+    // If no nodes need docstrings, return empty array
+    if (nodes.length === 0) {
+      return [];
+    }
     
-    return Promise.all(docstringPromises);
+    // Generate docstrings for all nodes in the file at once
+    return await generateDocstringsForFileContent(client, filePath, content, nodes);
   } catch (error) {
     console.error(`Error generating docstrings for file ${filePath}:`, error);
     return [];
@@ -215,11 +221,13 @@ export const generateDocstringsForFile = async (
  * Generates a docstring index for all files in a project
  * @param rootPath - The root path of the project
  * @param ignoredPatterns - Patterns to ignore
+ * @param progress - Optional progress reporter to show current status
  * @returns A map of file paths to docstring info arrays
  */
 export const generateDocstringIndex = async (
   rootPath: string,
-  ignoredPatterns: string[] = []
+  ignoredPatterns: string[] = [],
+  progress?: { report: (info: { message: string }) => void }
 ): Promise<DocstringIndex> => {
   try {
     // Get environment variables
@@ -232,29 +240,58 @@ export const generateDocstringIndex = async (
     }
     
     // Get project files
+    progress?.report({ message: 'Analyzing project structure...' });
     const projectFiles = await getProjectFiles(rootPath, ignoredPatterns);
     
-    // Generate docstrings for each file
+    // Initialize docstring index
     const docstringIndex: DocstringIndex = {};
+    
+    // Load existing docstring index if it exists
+    try {
+      const cursorTestDir = path.join(rootPath, '.cursortest');
+      const indexPath = path.join(cursorTestDir, 'docstring-index.json');
+      if (await fs.pathExists(indexPath)) {
+        const existingIndex = await fs.readJson(indexPath);
+        Object.assign(docstringIndex, existingIndex);
+        progress?.report({ message: 'Loaded existing docstring index' });
+      }
+    } catch (error) {
+      console.error('Error loading existing docstring index:', error);
+      // Continue with empty index if there's an error
+    }
     
     // Process files in batches to avoid rate limiting
     const BATCH_SIZE = 5;
     for (let i = 0; i < projectFiles.length; i += BATCH_SIZE) {
       const batch = projectFiles.slice(i, i + BATCH_SIZE);
-      const batchResults = await Promise.all(
-        batch.map(async (filePath) => {
-          const normalizedPath = normalizeFilePath(filePath, rootPath);
-          const docstrings = await generateDocstringsForFile(filePath, client);
-          return { path: normalizedPath, docstrings };
-        })
-      );
       
-      // Add results to index
-      batchResults.forEach(({ path, docstrings }) => {
-        if (docstrings.length > 0) {
-          docstringIndex[path] = docstrings;
-        }
+      // Update progress to show which batch we're processing
+      const currentBatch = Math.floor(i / BATCH_SIZE) + 1;
+      const totalBatches = Math.ceil(projectFiles.length / BATCH_SIZE);
+      progress?.report({ 
+        message: `Processing files (batch ${currentBatch}/${totalBatches})...`
       });
+      
+      // Process files one by one
+      for (const filePath of batch) {
+        const filename = path.basename(filePath);
+        // Update progress message for each file being processed
+        progress?.report({ 
+          message: `Generating docstrings for ${filename}...` 
+        });
+        
+        const normalizedPath = normalizeFilePath(filePath, rootPath);
+        const docstrings = await generateDocstringsForFile(filePath, client, rootPath);
+        
+        // Only add to index and write if there are docstrings
+        if (docstrings.length > 0) {
+          docstringIndex[normalizedPath] = docstrings;
+          
+          // Write the updated index to file after each file is processed
+          progress?.report({ message: `Updating docstring index with ${filename}...` });
+          await writeDocstringIndex(rootPath, docstringIndex);
+        }
+      }
       
       // If there are more files to process, wait a bit to avoid rate limiting
       if (i + BATCH_SIZE < projectFiles.length) {
@@ -262,9 +299,7 @@ export const generateDocstringIndex = async (
       }
     }
     
-    // Write index to file
-    await writeDocstringIndex(rootPath, docstringIndex);
-    
+    progress?.report({ message: 'Docstring index generation complete' });
     return docstringIndex;
   } catch (error) {
     console.error('Error generating docstring index:', error);
