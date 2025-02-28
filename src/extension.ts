@@ -3,34 +3,26 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import { createDependencyMap, updateDependencyMap } from './dependency-mapper';
 import { createSmartSymbolIndex, updateSmartSymbolIndex } from './smart-symbol-index';
 import { DependencyMap } from './types/dependency-map';
 import { SmartSymbolIndex } from './types/smart-symbol-index';
 import { extractContextFiles, generateRelevantInfo } from './context-extractor';
-import { generateDocstringIndex, loadEnvironmentVars } from './docstring-generator';
-
-const execAsync = promisify(exec);
-
-// Function to read .gitignore and parse its rules
-const parseGitignore = async (rootPath: string): Promise<string[]> => {
-	try {
-		const gitignorePath = path.join(rootPath, '.gitignore');
-		if (await fs.pathExists(gitignorePath)) {
-			const content = await fs.readFile(gitignorePath, 'utf8');
-			return content
-				.split('\n')
-				.map((line: string) => line.trim())
-				.filter((line: string) => line && !line.startsWith('#'));
-		}
-		return [];
-	} catch (error) {
-		console.error('Error parsing .gitignore:', error);
-		return [];
-	}
-};
+import { generateDocstringIndex } from './modules/docstring-generator';
+import { 
+	parseGitignore, 
+	buildTreeFromPaths, 
+	formatTree, 
+	execAsync 
+} from './utils/file-system';
+import {
+	getWorkspaceFolder,
+	ensureCursorTestDir,
+	writeCursorTestFile,
+	showInformationMessage,
+	showErrorMessage
+} from './utils/workspace';
+import { loadEnvironmentVars } from './utils/openai';
 
 // Function to generate a project tree respecting .gitignore rules
 const generateProjectTree = async (rootPath: string, ignoredPatterns: string[]): Promise<string> => {
@@ -103,51 +95,6 @@ const traverseDirectory = async (
 	}
 };
 
-// Function to build a tree structure from a list of file paths
-const buildTreeFromPaths = (paths: string[]): Record<string, any> => {
-	const tree: Record<string, any> = {};
-	
-	for (const filePath of paths) {
-		const parts = filePath.split('/');
-		let current = tree;
-		
-		// Process all directories in the path
-		for (let i = 0; i < parts.length - 1; i++) {
-			const part = parts[i];
-			if (!current[part]) {
-				current[part] = {};
-			}
-			current = current[part];
-		}
-		
-		// Add the file (last part)
-		const fileName = parts[parts.length - 1];
-		current[fileName] = null; // null indicates it's a file
-	}
-	
-	return tree;
-};
-
-// Function to format the tree as a string
-const formatTree = (tree: Record<string, any>, prefix: string = ''): string => {
-	let result = '';
-	const entries = Object.entries(tree);
-	
-	entries.forEach(([name, subtree], index) => {
-		const isLast = index === entries.length - 1;
-		const linePrefix = isLast ? '└── ' : '├── ';
-		const childPrefix = isLast ? '    ' : '│   ';
-		
-		result += `${prefix}${linePrefix}${name}\n`;
-		
-		if (subtree !== null) {
-			result += formatTree(subtree, `${prefix}${childPrefix}`);
-		}
-	});
-	
-	return result;
-};
-
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
 export function activate(context: vscode.ExtensionContext) {
@@ -157,7 +104,7 @@ export function activate(context: vscode.ExtensionContext) {
 	const analyzeCommand = vscode.commands.registerCommand('cursorcrawl.analyze', async () => {
 		const workspaceFolders = vscode.workspace.workspaceFolders;
 		if (!workspaceFolders) {
-			vscode.window.showErrorMessage('No workspace folder found. Please open a folder first.');
+			showErrorMessage('No workspace folder found. Please open a folder first.');
 			return;
 		}
 
@@ -165,8 +112,7 @@ export function activate(context: vscode.ExtensionContext) {
 		
 		try {
 			// Create .cursortest directory if it doesn't exist
-			const cursorTestDir = path.join(rootPath, '.cursortest');
-			await fs.ensureDir(cursorTestDir);
+			await ensureCursorTestDir(rootPath);
 			
 			// Parse .gitignore
 			const ignoredPatterns = await parseGitignore(rootPath);
@@ -175,23 +121,18 @@ export function activate(context: vscode.ExtensionContext) {
 			const treeContent = await generateProjectTree(rootPath, ignoredPatterns);
 			
 			// Write project tree to file
-			const projectTreePath = path.join(cursorTestDir, 'project-tree.mdc');
-			await fs.writeFile(projectTreePath, `# Project Tree\n\n\`\`\`\n${treeContent}\`\`\`\n`, 'utf8');
+			await writeCursorTestFile(rootPath, 'project-tree.mdc', `# Project Tree\n\n\`\`\`\n${treeContent}\`\`\`\n`);
 			
 			// Generate dependency map
 			const dependencyMap = await createDependencyMap(rootPath, ignoredPatterns);
 			
-			// Write dependency map to file
-			const dependencyMapPath = path.join(cursorTestDir, 'dependency-map.json');
-			await fs.writeFile(dependencyMapPath, JSON.stringify(dependencyMap, null, 2), 'utf8');
-			
 			// Generate smart symbol index
 			await createSmartSymbolIndex(rootPath, ignoredPatterns);
 			
-			vscode.window.showInformationMessage('Project analysis completed successfully!');
+			showInformationMessage('Project analysis completed successfully!');
 		} catch (error) {
 			console.error('Error generating project tree and dependency map:', error);
-			vscode.window.showErrorMessage(`Error generating project analysis: ${error instanceof Error ? error.message : String(error)}`);
+			showErrorMessage('Error generating project analysis', error);
 		}
 	});
 
@@ -199,7 +140,7 @@ export function activate(context: vscode.ExtensionContext) {
 	const buildSymbolIndexCommand = vscode.commands.registerCommand('cursorcrawl.buildSymbolIndex', async () => {
 		const workspaceFolders = vscode.workspace.workspaceFolders;
 		if (!workspaceFolders) {
-			vscode.window.showErrorMessage('No workspace folder open.');
+			showErrorMessage('No workspace folder open.');
 			return;
 		}
 		
@@ -219,33 +160,31 @@ export function activate(context: vscode.ExtensionContext) {
 				// Create the smart symbol index
 				await createSmartSymbolIndex(rootPath, ignoredPatterns);
 				
-				vscode.window.showInformationMessage('Smart Symbol Index built successfully.');
+				showInformationMessage('Smart Symbol Index built successfully.');
 			} catch (error) {
 				console.error('Error building smart symbol index:', error);
-				vscode.window.showErrorMessage(`Error building smart symbol index: ${error}`);
+				showErrorMessage('Error building smart symbol index', error);
 			}
 		});
 	});
 
 	// Register the generate docstring index command
 	const generateDocstringIndexCommand = vscode.commands.registerCommand('cursorcrawl.generateDocstringIndex', async () => {
-		const workspaceFolders = vscode.workspace.workspaceFolders;
-		if (!workspaceFolders) {
-			vscode.window.showErrorMessage('No workspace folder open.');
+		const workspaceFolder = getWorkspaceFolder();
+		if (!workspaceFolder) {
+			showErrorMessage('No workspace folder open.');
 			return;
 		}
 		
-		const rootPath = workspaceFolders[0].uri.fsPath;
-		
 		// Load environment variables
-		const envVars = loadEnvironmentVars(rootPath);
+		const envVars = loadEnvironmentVars(workspaceFolder);
 		if (!envVars.OPENAI_API_KEY) {
-			vscode.window.showErrorMessage('OpenAI API key not found. Please set it in .env.local or in settings.');
+			showErrorMessage('OpenAI API key not found. Please set it in .env.local or in settings.');
 			return;
 		}
 		
 		// Get ignored patterns from .gitignore
-		const ignoredPatterns = await parseGitignore(rootPath);
+		const ignoredPatterns = await parseGitignore(workspaceFolder);
 		
 		vscode.window.withProgress({
 			location: vscode.ProgressLocation.Notification,
@@ -256,28 +195,26 @@ export function activate(context: vscode.ExtensionContext) {
 				progress.report({ message: 'Analyzing project structure...' });
 				
 				// Generate the docstring index
-				await generateDocstringIndex(rootPath, ignoredPatterns);
+				await generateDocstringIndex(workspaceFolder, ignoredPatterns);
 				
-				vscode.window.showInformationMessage('Docstring Index generated successfully.');
+				showInformationMessage('Docstring Index generated successfully.');
 			} catch (error) {
 				console.error('Error generating docstring index:', error);
-				vscode.window.showErrorMessage(`Error generating docstring index: ${error}`);
+				showErrorMessage('Error generating docstring index', error);
 			}
 		});
 	});
 
 	// Register the extract context command
 	const extractContextCommand = vscode.commands.registerCommand('cursorcrawl.extractContext', async () => {
-		const workspaceFolders = vscode.workspace.workspaceFolders;
-		if (!workspaceFolders) {
-			vscode.window.showErrorMessage('No workspace folder found. Please open a folder first.');
+		const workspaceFolder = getWorkspaceFolder();
+		if (!workspaceFolder) {
+			showErrorMessage('No workspace folder found. Please open a folder first.');
 			return;
 		}
 
-		const rootPath = workspaceFolders[0].uri.fsPath;
-		
 		// Check if dependency map and symbol index exist
-		const cursorTestDir = path.join(rootPath, '.cursortest');
+		const cursorTestDir = path.join(workspaceFolder, '.cursortest');
 		const dependencyMapPath = path.join(cursorTestDir, 'dependency-map.json');
 		const symbolIndexPath = path.join(cursorTestDir, 'smart-symbol-index.json');
 		
@@ -321,19 +258,19 @@ export function activate(context: vscode.ExtensionContext) {
 					const contextFiles = extractContextFiles(promptText);
 					
 					if (contextFiles.length === 0) {
-						vscode.window.showInformationMessage('No file references found in prompt. Please use @filename.ts syntax to reference files.');
+						showInformationMessage('No file references found in prompt. Please use @filename.ts syntax to reference files.');
 						return;
 					}
 					
 					progress.report({ message: `Found ${contextFiles.length} referenced files. Generating relevant information...` });
 					
 					// Generate the relevant-info.json file
-					await generateRelevantInfo(rootPath, contextFiles);
+					await generateRelevantInfo(workspaceFolder, contextFiles);
 					
 					progress.report({ message: "Context information extracted successfully!" });
 					
 					// Show the relevant files that were found
-					vscode.window.showInformationMessage(
+					showInformationMessage(
 						`Successfully extracted context for ${contextFiles.length} files: ${contextFiles.slice(0, 3).join(', ')}${contextFiles.length > 3 ? '...' : ''}`
 					);
 					
@@ -345,18 +282,17 @@ export function activate(context: vscode.ExtensionContext) {
 			);
 		} catch (error) {
 			console.error('Error extracting context information:', error);
-			vscode.window.showErrorMessage(`Error extracting context information: ${error instanceof Error ? error.message : String(error)}`);
+			showErrorMessage('Error extracting context information', error);
 		}
 	});
 
 	// Set up file system watcher
 	const setupFileWatcher = () => {
-		const workspaceFolders = vscode.workspace.workspaceFolders;
-		if (!workspaceFolders) {
+		const workspaceFolder = getWorkspaceFolder();
+		if (!workspaceFolder) {
 			return;
 		}
 
-		const rootPath = workspaceFolders[0].uri.fsPath;
 		const watcher = vscode.workspace.createFileSystemWatcher('**/*', false, false, false);
 		
 		// Shared dependency map state for incremental updates
@@ -374,52 +310,43 @@ export function activate(context: vscode.ExtensionContext) {
 			debounceTimer = setTimeout(async () => {
 				try {
 					// Create .cursortest directory if it doesn't exist
-					const cursorTestDir = path.join(rootPath, '.cursortest');
-					await fs.ensureDir(cursorTestDir);
+					await ensureCursorTestDir(workspaceFolder);
 					
 					// Parse .gitignore
-					const ignoredPatterns = await parseGitignore(rootPath);
+					const ignoredPatterns = await parseGitignore(workspaceFolder);
 					
 					// Generate project tree
-					const treeContent = await generateProjectTree(rootPath, ignoredPatterns);
+					const treeContent = await generateProjectTree(workspaceFolder, ignoredPatterns);
 					
 					// Write project tree to file
-					const projectTreePath = path.join(cursorTestDir, 'project-tree.mdc');
-					await fs.writeFile(projectTreePath, `# Project Tree\n\n\`\`\`\n${treeContent}\`\`\`\n`, 'utf8');
+					await writeCursorTestFile(workspaceFolder, 'project-tree.mdc', `# Project Tree\n\n\`\`\`\n${treeContent}\`\`\`\n`);
 					
 					// Update dependency map
-					const dependencyMapPath = path.join(cursorTestDir, 'dependency-map.json');
-					
 					// If we have a dependency map cache and a specific file changed, do incremental update
 					if (dependencyMapCache && changedFile) {
 						dependencyMapCache = await updateDependencyMap(
-							rootPath, 
+							workspaceFolder, 
 							dependencyMapCache, 
 							changedFile,
 							ignoredPatterns
 						);
 					} else {
 						// Otherwise do a full rebuild
-						dependencyMapCache = await createDependencyMap(rootPath, ignoredPatterns);
+						dependencyMapCache = await createDependencyMap(workspaceFolder, ignoredPatterns);
 					}
 					
-					// Write updated dependency map to file
-					await fs.writeFile(dependencyMapPath, JSON.stringify(dependencyMapCache, null, 2), 'utf8');
-					
 					// Update smart symbol index
-					const symbolIndexPath = path.join(cursorTestDir, 'smart-symbol-index.json');
-					
 					// If we have a symbol index cache and a specific file changed, do incremental update
 					if (symbolIndexCache && changedFile) {
 						symbolIndexCache = await updateSmartSymbolIndex(
-							rootPath,
+							workspaceFolder,
 							symbolIndexCache,
 							changedFile,
 							ignoredPatterns
 						);
 					} else {
 						// Otherwise do a full rebuild
-						symbolIndexCache = await createSmartSymbolIndex(rootPath, ignoredPatterns);
+						symbolIndexCache = await createSmartSymbolIndex(workspaceFolder, ignoredPatterns);
 					}
 					
 					console.log('Project analysis updated automatically.');

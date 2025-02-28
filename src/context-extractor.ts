@@ -1,21 +1,37 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import { DependencyMap } from './types/dependency-map';
-import { SmartSymbolIndex } from './types/smart-symbol-index';
+import * as ts from 'typescript';
+import { FileDependencyInfo, DependencyMap } from './types/dependency-map';
+import { SymbolInfo, SmartSymbolIndex } from './types/smart-symbol-index';
 import { RelevantInfo } from './types/relevant-info';
+import { 
+  isAnalyzableFile, 
+  normalizeFilePath, 
+  getProjectFiles,
+  execAsync
+} from './utils/file-system';
+import { 
+  getLineNumber,
+  extractCodeSnippet,
+  getContextSnippet
+} from './utils/ts-analyzer';
+import { getWorkspaceFolder } from './utils/workspace';
 
 /**
  * Extracts context file references from a prompt string
  * @param promptText The prompt text to analyze
  * @returns Array of file paths referenced in the prompt
  */
-export const extractContextFiles = (promptText: string): string[] => {
-  // Match patterns like @filename.ts or @path/to/file.ts
-  const regex = /@([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)/g;
-  const matches = promptText.match(regex) || [];
+export const extractContextFiles = (prompt: string): string[] => {
+  // Match @filename.ext patterns in the prompt
+  const fileMatches = prompt.match(/@[\w.\/-]+/g);
   
-  // Remove the @ prefix and normalize paths
-  return matches.map(match => match.substring(1).replace(/\\/g, '/'));
+  if (!fileMatches) {
+    return [];
+  }
+  
+  // Remove @ prefix and deduplicate
+  return [...new Set(fileMatches.map(match => match.substring(1).trim()))];
 };
 
 /**
@@ -181,41 +197,166 @@ export const filterSymbolIndex = (
  */
 export const generateRelevantInfo = async (
   rootPath: string,
-  contextFiles: string[]
-): Promise<RelevantInfo> => {
+  filePatterns: string[],
+): Promise<void> => {
+  const cursorTestDir = path.join(rootPath, '.cursortest');
+  
+  // Load dependency map
+  const dependencyMapPath = path.join(cursorTestDir, 'dependency-map.json');
+  let dependencyMap: DependencyMap = { files: {} };
+  
   try {
-    // Normalize context file paths
-    const normalizedContextFiles = contextFiles.map(file => file.replace(/\\/g, '/'));
-    
-    // Read in the dependency map and symbol index
-    const dependencyMapPath = path.join(rootPath, '.cursortest', 'dependency-map.json');
-    const symbolIndexPath = path.join(rootPath, '.cursortest', 'smart-symbol-index.json');
-    
-    if (!await fs.pathExists(dependencyMapPath) || !await fs.pathExists(symbolIndexPath)) {
-      throw new Error('Dependency map or symbol index not found. Please run cursorcrawl.analyze first.');
+    const dependencyMapContent = await fs.readFile(dependencyMapPath, 'utf8');
+    dependencyMap = JSON.parse(dependencyMapContent);
+  } catch (error) {
+    console.error('Error loading dependency map:', error);
+  }
+  
+  // Load symbol index
+  const symbolIndexPath = path.join(cursorTestDir, 'smart-symbol-index.json');
+  let symbolIndex: SmartSymbolIndex = { symbols: {} };
+  
+  try {
+    const symbolIndexContent = await fs.readFile(symbolIndexPath, 'utf8');
+    symbolIndex = JSON.parse(symbolIndexContent);
+  } catch (error) {
+    console.error('Error loading symbol index:', error);
+  }
+  
+  // Find all matching files
+  const allMatchingFiles: string[] = [];
+  
+  for (const pattern of filePatterns) {
+    const matchingFiles = await findFilesMatchingPattern(rootPath, pattern);
+    allMatchingFiles.push(...matchingFiles);
+  }
+  
+  // Remove duplicates
+  const uniqueFiles = [...new Set(allMatchingFiles)];
+  
+  // Extract relevant information for each file
+  const relevantInfo: RelevantInfo = {
+    dependencies: { files: {} },
+    symbols: { symbols: {} },
+    contextFiles: uniqueFiles
+  };
+  
+  for (const filePath of uniqueFiles) {
+    if (!isAnalyzableFile(filePath)) {
+      continue;
     }
     
-    const dependencyMap: DependencyMap = await fs.readJson(dependencyMapPath);
-    const symbolIndex: SmartSymbolIndex = await fs.readJson(symbolIndexPath);
+    // Extract symbols for this file
+    const fileSymbols = await extractRelevantSymbols(rootPath, filePath, symbolIndex);
     
-    // Filter the maps to only include relevant information
-    const filteredDependencyMap = filterDependencyMap(dependencyMap, normalizedContextFiles);
-    const filteredSymbolIndex = filterSymbolIndex(symbolIndex, normalizedContextFiles);
+    // Add symbols to the relevant info
+    fileSymbols.forEach(symbol => {
+      const symbolId = `${symbol.file}:${symbol.name}`;
+      relevantInfo.symbols.symbols[symbolId] = symbol;
+    });
     
-    // Create the relevant info object
-    const relevantInfo: RelevantInfo = {
-      dependencies: filteredDependencyMap,
-      symbols: filteredSymbolIndex,
-      contextFiles: normalizedContextFiles
+    // Extract dependencies for this file
+    const { imports, dependencies } = extractDependencies(filePath, rootPath, dependencyMap);
+    
+    // Add dependency info to the relevant info
+    relevantInfo.dependencies.files[filePath] = {
+      imports: imports.map(importPath => ({ from: importPath, imports: [] })),
+      importedBy: dependencies.map(depPath => ({ from: depPath, imports: [] }))
     };
-    
-    // Write the filtered information to file
-    const outputPath = path.join(rootPath, '.cursortest', 'relevant-info.json');
-    await fs.writeJson(outputPath, relevantInfo, { spaces: 2 });
-    
-    return relevantInfo;
-  } catch (error) {
-    console.error('Error generating relevant information:', error);
-    throw error;
   }
-}; 
+  
+  // Write relevant info to file
+  const relevantInfoPath = path.join(cursorTestDir, 'relevant-info.json');
+  await fs.writeFile(relevantInfoPath, JSON.stringify(relevantInfo, null, 2), 'utf8');
+};
+
+// Function to find all files matching a pattern (using glob matching)
+const findFilesMatchingPattern = async (rootPath: string, pattern: string): Promise<string[]> => {
+  // Handle exact file paths
+  if (pattern.includes('.') && !pattern.includes('*')) {
+    // Try with exact path
+    const exactPath = path.join(rootPath, pattern);
+    if (await fs.pathExists(exactPath)) {
+      return [pattern];
+    }
+    
+    // Try searching for the file name in the project
+    const fileName = path.basename(pattern);
+    const extension = path.extname(fileName);
+    const files = await getProjectFiles(rootPath);
+    
+    return files
+      .filter(file => path.basename(file) === fileName)
+      .map(file => path.relative(rootPath, file));
+  }
+  
+  // Handle wildcard patterns
+  const extension = pattern.includes('.') ? path.extname(pattern) : '.ts';
+  const files = await getProjectFiles(rootPath);
+  const filteredFiles = files.filter(file => path.extname(file) === extension);
+  
+  // Convert glob pattern to regex
+  const regexPattern = new RegExp(pattern.replace(/\./g, '\\.').replace(/\*/g, '.*'));
+  
+  return filteredFiles
+    .filter(file => regexPattern.test(file))
+    .map(file => path.relative(rootPath, file));
+};
+
+// Function to extract relevant symbols from a file
+const extractRelevantSymbols = async (
+  rootPath: string,
+  filePath: string,
+  symbolIndex: SmartSymbolIndex,
+): Promise<SymbolInfo[]> => {
+  const normalizedPath = normalizeFilePath(filePath, rootPath);
+  
+  // Convert the symbols object to an array of SymbolInfo objects
+  const symbolInfoArray = Object.values(symbolIndex.symbols);
+  
+  // Filter symbols that are defined in the specified file
+  return symbolInfoArray.filter(symbol => normalizeFilePath(symbol.file, rootPath) === normalizedPath);
+};
+
+// Function to extract dependencies and imports for a file
+const extractDependencies = (
+  filePath: string,
+  rootPath: string,
+  dependencyMap: DependencyMap,
+): { imports: string[]; dependencies: string[] } => {
+  const normalizedPath = normalizeFilePath(filePath, rootPath);
+  
+  // Get file info from dependency map
+  const fileInfo = dependencyMap.files[normalizedPath];
+  
+  if (!fileInfo) {
+    return { imports: [], dependencies: [] };
+  }
+  
+  // Extract imports from ImportInfo objects
+  const imports = fileInfo.imports.map(importInfo => importInfo.from);
+  
+  // Extract files that import this file (dependencies)
+  const dependencies = fileInfo.importedBy.map(importInfo => importInfo.from);
+  
+  return { imports, dependencies };
+};
+
+// Function to extract source code with additional context from a file
+const extractSourceWithContext = async (
+  rootPath: string,
+  filePath: string,
+): Promise<string> => {
+  const fullPath = path.join(rootPath, filePath);
+  
+  try {
+    if (await fs.pathExists(fullPath)) {
+      const source = await fs.readFile(fullPath, 'utf8');
+      return source;
+    }
+    return '';
+  } catch (error) {
+    console.error(`Error reading file ${filePath}:`, error);
+    return '';
+  }
+};

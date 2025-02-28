@@ -9,15 +9,25 @@ import {
   CallerInfo,
   CallInfo
 } from './types/smart-symbol-index';
-
-// File extensions to consider for analysis (same as dependency-mapper)
-const ANALYZABLE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx'];
-
-// Directories that should always be ignored (same as dependency-mapper)
-const ALWAYS_IGNORED_DIRS = ['node_modules', '.next', 'dist', 'build', '.git', '.vscode'];
-
-// Maximum number of files to process
-const MAX_FILES_TO_PROCESS = 2000;
+import {
+  ANALYZABLE_EXTENSIONS,
+  ALWAYS_IGNORED_DIRS,
+  MAX_FILES_TO_PROCESS,
+  isAnalyzableFile,
+  normalizeFilePath,
+  getProjectFiles,
+  isIgnored
+} from './utils/file-system';
+import {
+  computeLineStarts,
+  getLineNumber,
+  extractCodeSnippet,
+  getContextSnippet
+} from './utils/ts-analyzer';
+import {
+  writeCursorTestFile,
+  ensureCursorTestDir
+} from './utils/workspace';
 
 // Output directory and file for the smart symbol index
 const OUTPUT_DIR = '.cursortest';
@@ -236,70 +246,6 @@ export const updateSmartSymbolIndex = async (
 };
 
 /**
- * Gets a list of all project files, respecting ignored patterns
- * (Using the same logic as dependency-mapper)
- */
-const getProjectFiles = async (
-  rootPath: string,
-  ignoredPatterns: string[] = []
-): Promise<string[]> => {
-  const files: string[] = [];
-  
-  const isIgnored = (filePath: string): boolean => {
-    const relativePath = path.relative(rootPath, filePath);
-    
-    // Always ignore specific directories regardless of gitignore
-    if (ALWAYS_IGNORED_DIRS.some(dir => 
-      relativePath.startsWith(`${dir}${path.sep}`) || // Directory is at root
-      relativePath.includes(`${path.sep}${dir}${path.sep}`) || // Directory is in path
-      relativePath === dir // Path is exactly the directory
-    )) {
-      return true;
-    }
-    
-    // Check gitignore patterns
-    return ignoredPatterns.some(pattern => {
-      // Simple pattern matching (can be enhanced for more complex gitignore rules)
-      if (pattern.endsWith('/')) {
-        // Directory pattern
-        return relativePath.startsWith(pattern) || relativePath.includes(`/${pattern}`);
-      }
-      // File pattern
-      return relativePath === pattern || relativePath.endsWith(`/${pattern}`) ||
-             // Handle wildcard patterns like *.vsix
-             (pattern.startsWith('*') && relativePath.endsWith(pattern.substring(1)));
-    });
-  };
-  
-  const traverseDirectory = async (currentPath: string): Promise<void> => {
-    if (isIgnored(currentPath)) {
-      return;
-    }
-    
-    const items = await fs.readdir(currentPath);
-    
-    for (const item of items) {
-      const itemPath = path.join(currentPath, item);
-      
-      if (isIgnored(itemPath)) {
-        continue;
-      }
-      
-      const stats = await fs.stat(itemPath);
-      
-      if (stats.isDirectory()) {
-        await traverseDirectory(itemPath);
-      } else {
-        files.push(itemPath);
-      }
-    }
-  };
-  
-  await traverseDirectory(rootPath);
-  return files;
-};
-
-/**
  * Extracts symbols from a file
  */
 const extractSymbols = async (
@@ -332,24 +278,6 @@ const extractSymbols = async (
     const symbols: SymbolInfo[] = [];
     const lineMap = computeLineStarts(fileContent);
     
-    // Helper function to convert position to line number
-    const getLineNumber = (position: number): number => {
-      // Find the largest line start that's less than or equal to position
-      let low = 0;
-      let high = lineMap.length - 1;
-      
-      while (low <= high) {
-        const mid = Math.floor((low + high) / 2);
-        if (lineMap[mid] <= position) {
-          low = mid + 1;
-        } else {
-          high = mid - 1;
-        }
-      }
-      
-      return high + 1; // Line numbers are 1-based
-    };
-    
     // Recursively visit nodes to extract symbols
     const visit = (node: ts.Node) => {
       try {
@@ -357,7 +285,7 @@ const extractSymbols = async (
         if (ts.isFunctionDeclaration(node) && node.name) {
           const name = node.name.text;
           const startPos = node.getStart(sourceFile);
-          const lineNumber = getLineNumber(startPos);
+          const lineNumber = getLineNumber(sourceFile, startPos);
           
           // Extract parameters
           const parameters: ParameterInfo[] = node.parameters.map(param => {
@@ -396,7 +324,7 @@ const extractSymbols = async (
         else if (ts.isClassDeclaration(node) && node.name) {
           const name = node.name.text;
           const startPos = node.getStart(sourceFile);
-          const lineNumber = getLineNumber(startPos);
+          const lineNumber = getLineNumber(sourceFile, startPos);
           
           symbols.push({
             name,
@@ -413,7 +341,7 @@ const extractSymbols = async (
             if (ts.isMethodDeclaration(member) && member.name) {
               const methodName = member.name.getText(sourceFile);
               const startPos = member.getStart(sourceFile);
-              const lineNumber = getLineNumber(startPos);
+              const lineNumber = getLineNumber(sourceFile, startPos);
               
               // Extract parameters
               const parameters: ParameterInfo[] = member.parameters.map(param => {
@@ -454,7 +382,7 @@ const extractSymbols = async (
         else if (ts.isInterfaceDeclaration(node) && node.name) {
           const name = node.name.text;
           const startPos = node.getStart(sourceFile);
-          const lineNumber = getLineNumber(startPos);
+          const lineNumber = getLineNumber(sourceFile, startPos);
           
           symbols.push({
             name,
@@ -471,7 +399,7 @@ const extractSymbols = async (
         else if (ts.isTypeAliasDeclaration(node) && node.name) {
           const name = node.name.text;
           const startPos = node.getStart(sourceFile);
-          const lineNumber = getLineNumber(startPos);
+          const lineNumber = getLineNumber(sourceFile, startPos);
           
           symbols.push({
             name,
@@ -488,7 +416,7 @@ const extractSymbols = async (
         else if (ts.isEnumDeclaration(node) && node.name) {
           const name = node.name.text;
           const startPos = node.getStart(sourceFile);
-          const lineNumber = getLineNumber(startPos);
+          const lineNumber = getLineNumber(sourceFile, startPos);
           
           symbols.push({
             name,
@@ -507,7 +435,7 @@ const extractSymbols = async (
             if (ts.isIdentifier(declaration.name)) {
               const name = declaration.name.text;
               const startPos = declaration.getStart(sourceFile);
-              const lineNumber = getLineNumber(startPos);
+              const lineNumber = getLineNumber(sourceFile, startPos);
               
               symbols.push({
                 name,
@@ -565,41 +493,9 @@ const resolveReferencesAndCalls = async (
       true
     );
     
-    const lineMap = computeLineStarts(fileContent);
-    
-    // Helper function to convert position to line number
-    const getLineNumber = (position: number): number => {
-      // Find the largest line start that's less than or equal to position
-      let low = 0;
-      let high = lineMap.length - 1;
-      
-      while (low <= high) {
-        const mid = Math.floor((low + high) / 2);
-        if (lineMap[mid] <= position) {
-          low = mid + 1;
-        } else {
-          high = mid - 1;
-        }
-      }
-      
-      return high + 1; // Line numbers are 1-based
-    };
-    
     // Get symbols defined in this file
     const fileSymbols = (fileSymbolMap[normalizedPath] || [])
       .map(id => symbolIndex.symbols[id]);
-    
-    // Function to get a context snippet
-    const getContextSnippet = (position: number): string => {
-      const lineNumber = getLineNumber(position);
-      const lineStartPos = lineMap[lineNumber - 1];
-      let lineEndPos = fileContent.indexOf('\n', lineStartPos);
-      if (lineEndPos === -1) {
-        lineEndPos = fileContent.length;
-      }
-      
-      return fileContent.substring(lineStartPos, lineEndPos).trim();
-    };
     
     // Track current enclosing symbol
     let currentSymbol: SymbolInfo | null = null;
@@ -650,8 +546,8 @@ const resolveReferencesAndCalls = async (
       // Handle function/method calls
       if (ts.isCallExpression(parent) && parent.expression === node) {
         const position = node.getStart(sourceFile);
-        const lineNumber = getLineNumber(position);
-        const contextSnippet = getContextSnippet(position);
+        const lineNumber = getLineNumber(sourceFile, position);
+        const contextSnippet = getContextSnippet(sourceFile, position, 3);
         
         for (const targetId of targetSymbolIds) {
           const targetSymbol = symbolIndex.symbols[targetId];
@@ -715,49 +611,15 @@ const writeSymbolIndex = async (
   symbolIndex: SmartSymbolIndex
 ): Promise<void> => {
   try {
-    const outputDir = path.join(rootPath, OUTPUT_DIR);
-    const outputPath = path.join(outputDir, OUTPUT_FILE);
-    
     // Create the output directory if it doesn't exist
-    await fs.ensureDir(outputDir);
+    await ensureCursorTestDir(rootPath);
     
     // Write the index to file
-    await fs.writeJson(outputPath, symbolIndex, { spaces: 2 });
+    await writeCursorTestFile(rootPath, OUTPUT_FILE, symbolIndex);
     
-    console.log(`Smart symbol index written to ${outputPath}`);
+    console.log(`Smart symbol index written to ${path.join(rootPath, OUTPUT_DIR, OUTPUT_FILE)}`);
   } catch (error) {
     console.error('Error writing symbol index:', error);
     throw error;
   }
-};
-
-/**
- * Computes line start positions for a file
- */
-const computeLineStarts = (text: string): number[] => {
-  const result: number[] = [0]; // First line starts at position 0
-  
-  for (let i = 0; i < text.length; i++) {
-    const ch = text.charAt(i);
-    if (ch === '\n') {
-      result.push(i + 1);
-    }
-  }
-  
-  return result;
-};
-
-/**
- * Normalizes a file path relative to the root
- */
-const normalizeFilePath = (filePath: string, rootPath: string): string => {
-  return path.relative(rootPath, filePath).replace(/\\/g, '/');
-};
-
-/**
- * Checks if a file should be analyzed based on its extension
- */
-const isAnalyzableFile = (filePath: string): boolean => {
-  const ext = path.extname(filePath).toLowerCase();
-  return ANALYZABLE_EXTENSIONS.includes(ext);
 }; 

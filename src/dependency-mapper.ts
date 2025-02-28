@@ -2,15 +2,16 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import * as ts from 'typescript';
 import { DependencyMap, FileDependencyInfo, ImportInfo } from './types/dependency-map';
-
-// File extensions to consider for dependency analysis
-const ANALYZABLE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx'];
-
-// Directories that should always be ignored regardless of .gitignore
-const ALWAYS_IGNORED_DIRS = ['node_modules', '.next', 'dist', 'build', '.git', '.vscode'];
-
-// Maximum number of files to process in a single dependency map operation
-const MAX_FILES_TO_PROCESS = 2000;
+import { 
+  ANALYZABLE_EXTENSIONS, 
+  ALWAYS_IGNORED_DIRS, 
+  MAX_FILES_TO_PROCESS,
+  normalizeFilePath,
+  isAnalyzableFile,
+  getProjectFiles
+} from './utils/file-system';
+import { arraysHaveSameItems } from './utils/ts-analyzer';
+import { writeCursorTestFile } from './utils/workspace';
 
 /**
  * Creates a complete dependency map for a project
@@ -74,6 +75,9 @@ export const createDependencyMap = async (
         });
       }
     }
+    
+    // Write the dependency map to file
+    await writeCursorTestFile(rootPath, 'dependency-map.json', dependencyMap);
     
     return dependencyMap;
   } catch (error) {
@@ -199,69 +203,6 @@ export const updateDependencyMap = async (
     // If anything goes wrong during the update, return the original map unchanged
     return existingMap;
   }
-};
-
-/**
- * Gets a list of all project files, respecting ignored patterns
- */
-const getProjectFiles = async (
-  rootPath: string,
-  ignoredPatterns: string[] = []
-): Promise<string[]> => {
-  const files: string[] = [];
-  
-  const isIgnored = (filePath: string): boolean => {
-    const relativePath = path.relative(rootPath, filePath);
-    
-    // Always ignore specific directories regardless of gitignore
-    if (ALWAYS_IGNORED_DIRS.some(dir => 
-      relativePath.startsWith(`${dir}${path.sep}`) || // Directory is at root
-      relativePath.includes(`${path.sep}${dir}${path.sep}`) || // Directory is in path
-      relativePath === dir // Path is exactly the directory
-    )) {
-      return true;
-    }
-    
-    // Check gitignore patterns
-    return ignoredPatterns.some(pattern => {
-      // Simple pattern matching (can be enhanced for more complex gitignore rules)
-      if (pattern.endsWith('/')) {
-        // Directory pattern
-        return relativePath.startsWith(pattern) || relativePath.includes(`/${pattern}`);
-      }
-      // File pattern
-      return relativePath === pattern || relativePath.endsWith(`/${pattern}`) ||
-             // Handle wildcard patterns like *.vsix
-             (pattern.startsWith('*') && relativePath.endsWith(pattern.substring(1)));
-    });
-  };
-  
-  const traverseDirectory = async (currentPath: string): Promise<void> => {
-    if (isIgnored(currentPath)) {
-      return;
-    }
-    
-    const items = await fs.readdir(currentPath);
-    
-    for (const item of items) {
-      const itemPath = path.join(currentPath, item);
-      
-      if (isIgnored(itemPath)) {
-        continue;
-      }
-      
-      const stats = await fs.stat(itemPath);
-      
-      if (stats.isDirectory()) {
-        await traverseDirectory(itemPath);
-      } else {
-        files.push(itemPath);
-      }
-    }
-  };
-  
-  await traverseDirectory(rootPath);
-  return files;
 };
 
 /**
@@ -495,42 +436,3 @@ const resolveImportPath = (
     return null;
   }
 };
-
-/**
- * Normalizes a file path relative to the root
- */
-const normalizeFilePath = (filePath: string, rootPath: string): string => {
-  return path.relative(rootPath, filePath).replace(/\\/g, '/');
-};
-
-/**
- * Checks if a file should be analyzed based on its extension
- */
-const isAnalyzableFile = (filePath: string): boolean => {
-  const ext = path.extname(filePath).toLowerCase();
-  return ANALYZABLE_EXTENSIONS.includes(ext);
-};
-
-/**
- * Compares two arrays to see if they have the same items (order-independent)
- */
-const arraysHaveSameItems = (arr1: string[], arr2: string[]): boolean => {
-  if (arr1.length !== arr2.length) {
-    return false;
-  }
-  
-  const set1 = new Set(arr1);
-  const set2 = new Set(arr2);
-  
-  if (set1.size !== set2.size) {
-    return false;
-  }
-  
-  for (const item of set1) {
-    if (!set2.has(item)) {
-      return false;
-    }
-  }
-  
-  return true;
-}; 

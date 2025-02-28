@@ -1,78 +1,26 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import * as dotenv from 'dotenv';
-import OpenAI from 'openai';
-import * as vscode from 'vscode';
 import * as ts from 'typescript';
-import { DocstringInfo, DocstringIndex } from './types/docstring-index';
+import OpenAI from 'openai';
+import { DocstringInfo, DocstringIndex } from '../../types/docstring-index';
 import { 
-  ANALYZABLE_EXTENSIONS, 
-  ALWAYS_IGNORED_DIRS, 
-  MAX_FILES_TO_PROCESS,
+  ANALYZABLE_EXTENSIONS,
   normalizeFilePath,
   isAnalyzableFile,
   getProjectFiles 
-} from './utils/file-system';
+} from '../../utils/file-system';
 import { 
   loadEnvironmentVars, 
   createOpenAIClient, 
-  generateDocstring as generateDocstringWithAI 
-} from './utils/openai';
+  generateDocstring 
+} from '../../utils/openai';
 import { 
   extractCodeSnippet, 
   getLineAndCharacter 
-} from './utils/ts-analyzer';
+} from '../../utils/ts-analyzer';
 import { 
-  writeCursorTestFile, 
-  ensureCursorTestDir 
-} from './utils/workspace';
-
-// Load environment variables from .env.local
-interface EnvVars {
-  OPENAI_API_KEY?: string;
-}
-
-/**
- * Generates a docstring for a function or class using OpenAI
- * @param client - The OpenAI API client
- * @param codeSnippet - The code snippet to generate a docstring for
- * @param functionName - The name of the function or class
- * @returns The generated docstring
- */
-export const generateDocstring = async (
-  client: OpenAI,
-  codeSnippet: string,
-  functionName: string
-): Promise<string> => {
-  try {
-    const prompt = `Generate a comprehensive JSDoc style docstring for the following TypeScript code. 
-Focus on explaining what the function/class does, all parameters, return type, and possible errors.
-Be concise but complete.
-
-Code:
-\`\`\`typescript
-${codeSnippet}
-\`\`\`
-
-Return only the JSDoc comment block (with /** and */), nothing else.`;
-
-    const response = await client.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages: [
-        { role: 'system', content: 'You are a helpful assistant that generates high-quality TypeScript docstrings.' },
-        { role: 'user', content: prompt }
-      ],
-      temperature: 0.2,
-      max_tokens: 500,
-    });
-
-    const docstring = response.choices[0]?.message.content?.trim() || '';
-    return docstring;
-  } catch (error) {
-    console.error(`Error generating docstring for ${functionName}:`, error);
-    return `/**\n * ${functionName}\n */`;
-  }
-};
+  writeCursorTestFile 
+} from '../../utils/workspace';
 
 /**
  * Gets node type as a string
@@ -197,7 +145,7 @@ export const generateDocstringsForFile = async (
     
     // Generate docstrings for each node
     const docstringPromises = nodes.map(async (node) => {
-      const docstring = await generateDocstringWithAI(client, node.snippet, node.name);
+      const docstring = await generateDocstring(client, node.snippet, node.name);
       return {
         ...node,
         docstring
@@ -208,6 +156,23 @@ export const generateDocstringsForFile = async (
   } catch (error) {
     console.error(`Error generating docstrings for file ${filePath}:`, error);
     return [];
+  }
+};
+
+/**
+ * Writes the docstring index to a file
+ * @param rootPath - The root path of the project
+ * @param docstringIndex - The docstring index to write
+ */
+const writeDocstringIndex = async (
+  rootPath: string,
+  docstringIndex: DocstringIndex
+): Promise<void> => {
+  try {
+    await writeCursorTestFile(rootPath, 'docstring-index.json', docstringIndex);
+    console.log('Docstring index written successfully');
+  } catch (error) {
+    console.error('Error writing docstring index:', error);
   }
 };
 
@@ -269,22 +234,5 @@ export const generateDocstringIndex = async (
   } catch (error) {
     console.error('Error generating docstring index:', error);
     return {};
-  }
-};
-
-/**
- * Writes the docstring index to a file
- * @param rootPath - The root path of the project
- * @param docstringIndex - The docstring index to write
- */
-const writeDocstringIndex = async (
-  rootPath: string,
-  docstringIndex: DocstringIndex
-): Promise<void> => {
-  try {
-    await writeCursorTestFile(rootPath, 'docstring-index.json', docstringIndex);
-    console.log('Docstring index written successfully');
-  } catch (error) {
-    console.error('Error writing docstring index:', error);
   }
 }; 
