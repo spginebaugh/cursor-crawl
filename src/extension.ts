@@ -5,6 +5,8 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { createDependencyMap, updateDependencyMap } from './dependency-mapper';
+import { DependencyMap } from './types/dependency-map';
 
 const execAsync = promisify(exec);
 
@@ -172,14 +174,19 @@ export function activate(context: vscode.ExtensionContext) {
 			const projectTreePath = path.join(cursorTestDir, 'project-tree.mdc');
 			await fs.writeFile(projectTreePath, `# Project Tree\n\n\`\`\`\n${treeContent}\`\`\`\n`, 'utf8');
 			
-			vscode.window.showInformationMessage('Project tree generated successfully!');
+			// Generate dependency map
+			const dependencyMap = await createDependencyMap(rootPath, ignoredPatterns);
+			const dependencyMapPath = path.join(cursorTestDir, 'dependency-map.json');
+			await fs.writeFile(dependencyMapPath, JSON.stringify(dependencyMap, null, 2), 'utf8');
 			
-			// Open the file in the editor
+			vscode.window.showInformationMessage('Project tree and dependency map generated successfully!');
+			
+			// Open the project tree file in the editor
 			const document = await vscode.workspace.openTextDocument(vscode.Uri.file(projectTreePath));
 			await vscode.window.showTextDocument(document);
 		} catch (error) {
-			console.error('Error generating project tree:', error);
-			vscode.window.showErrorMessage(`Error generating project tree: ${error instanceof Error ? error.message : String(error)}`);
+			console.error('Error generating project tree and dependency map:', error);
+			vscode.window.showErrorMessage(`Error generating project analysis: ${error instanceof Error ? error.message : String(error)}`);
 		}
 	});
 
@@ -193,9 +200,12 @@ export function activate(context: vscode.ExtensionContext) {
 		const rootPath = workspaceFolders[0].uri.fsPath;
 		const watcher = vscode.workspace.createFileSystemWatcher('**/*', false, false, false);
 		
+		// Shared dependency map state for incremental updates
+		let dependencyMapCache: DependencyMap | null = null;
+		
 		// Debounce to avoid too many updates
 		let debounceTimer: NodeJS.Timeout | null = null;
-		const updateProjectTree = async () => {
+		const updateProjectAnalysis = async (changedFile?: string) => {
 			if (debounceTimer) {
 				clearTimeout(debounceTimer);
 			}
@@ -216,20 +226,39 @@ export function activate(context: vscode.ExtensionContext) {
 					const projectTreePath = path.join(cursorTestDir, 'project-tree.mdc');
 					await fs.writeFile(projectTreePath, `# Project Tree\n\n\`\`\`\n${treeContent}\`\`\`\n`, 'utf8');
 					
-					console.log('Project tree updated automatically.');
+					// Update dependency map
+					const dependencyMapPath = path.join(cursorTestDir, 'dependency-map.json');
+					
+					// If we have a dependency map cache and a specific file changed, do incremental update
+					if (dependencyMapCache && changedFile) {
+						dependencyMapCache = await updateDependencyMap(
+							rootPath, 
+							dependencyMapCache, 
+							changedFile,
+							ignoredPatterns
+						);
+					} else {
+						// Otherwise do a full rebuild
+						dependencyMapCache = await createDependencyMap(rootPath, ignoredPatterns);
+					}
+					
+					// Write updated dependency map to file
+					await fs.writeFile(dependencyMapPath, JSON.stringify(dependencyMapCache, null, 2), 'utf8');
+					
+					console.log('Project analysis updated automatically.');
 				} catch (error) {
-					console.error('Error updating project tree:', error);
+					console.error('Error updating project analysis:', error);
 				}
 			}, 1000); // Wait 1 second after the last change
 		};
 		
 		// Watch for file changes
-		watcher.onDidCreate(updateProjectTree);
-		watcher.onDidChange(updateProjectTree);
-		watcher.onDidDelete(updateProjectTree);
+		watcher.onDidCreate((uri) => updateProjectAnalysis(uri.fsPath));
+		watcher.onDidChange((uri) => updateProjectAnalysis(uri.fsPath));
+		watcher.onDidDelete((uri) => updateProjectAnalysis(uri.fsPath));
 		
-		// Generate tree on startup
-		updateProjectTree();
+		// Generate analysis on startup
+		updateProjectAnalysis();
 		
 		context.subscriptions.push(watcher);
 	};
