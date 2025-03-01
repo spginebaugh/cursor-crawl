@@ -58,6 +58,8 @@ export const generateDocstrings = async ({
     let fileCount = 0;
     let processedSymbolCount = 0;
     let skippedSymbolCount = 0;
+    let consecutiveErrorCount = 0;
+    const MAX_CONSECUTIVE_ERRORS = 3; // Maximum number of consecutive errors before cancelling
     
     const skipExisting = mode === DocstringGenerationMode.GENERATE_MISSING;
     
@@ -122,6 +124,9 @@ export const generateDocstrings = async ({
           client
         });
         
+        // Reset consecutive error count on success
+        consecutiveErrorCount = 0;
+        
         // Check for cancellation after processing symbols
         if (progress?.isCancelled?.()) {
           progress?.report({ message: 'Docstring generation cancelled.' });
@@ -149,6 +154,30 @@ export const generateDocstrings = async ({
         await new Promise(resolve => setTimeout(resolve, 500));
       } catch (error) {
         console.error(`Error generating docstrings for ${filePath}:`, error);
+        
+        // Check if this is an error that persisted after retries
+        if (error instanceof Error) {
+          // Increment consecutive error counter
+          consecutiveErrorCount++;
+          
+          // Check properties added by our enhanced error handling
+          const shouldCancel = (error as any).shouldCancelGeneration === true || 
+                              (error as any).isServerError === true ||
+                              consecutiveErrorCount >= MAX_CONSECUTIVE_ERRORS;
+          
+          if (shouldCancel) {
+            // Show cancellation message
+            const errorMessage = 'Docstring generation cancelled due to persistent errors. Please try again later.';
+            vscode.window.showErrorMessage(errorMessage);
+            progress?.report({ message: errorMessage });
+            
+            // Save work done so far
+            await SymbolIndexService.writeSymbolIndex(rootPath, symbolIndex);
+            
+            console.error('Docstring generation cancelled due to persistent errors:', error);
+            return; // Exit the function
+          }
+        }
       }
     }
     
@@ -246,7 +275,33 @@ export const generateDocstringsUnified = async (
     progress?.report({ message: completionMessage });
   } catch (error) {
     console.error('Error generating docstrings:', error);
-    throw error;
+    
+    // Handle different error types with user-friendly messages
+    let errorMessage = 'An error occurred during docstring generation.';
+    
+    if (error instanceof Error) {
+      if (error.message.includes('500')) {
+        errorMessage = 'OpenAI server error (500). The service is temporarily unavailable. Please try again later.';
+      } else if (error.message.includes('401') || error.message.includes('API key')) {
+        errorMessage = 'Invalid or missing OpenAI API key. Please check your API key configuration.';
+      } else if (error.message.includes('429') || error.message.includes('rate limit')) {
+        errorMessage = 'OpenAI API rate limit exceeded. Please wait a few moments and try again.';
+      } else if (error.message.includes('timeout')) {
+        errorMessage = 'Request to OpenAI API timed out. Please check your network connection and try again.';
+      } else if (error.message.includes('retry') || (error as any).shouldCancelGeneration === true) {
+        errorMessage = 'Docstring generation failed after multiple retry attempts. Please try again later.';
+      } else if ((error as any).isServerError === true) {
+        errorMessage = 'OpenAI service is experiencing issues. Docstring generation has been cancelled. Please try again later.';
+      } else {
+        // For other errors, include the actual error message
+        errorMessage = `Error generating docstrings: ${error.message}`;
+      }
+    }
+    
+    vscode.window.showErrorMessage(errorMessage);
+    
+    // Throw a standard error with the friendly message
+    throw new Error(errorMessage);
   }
 };
 

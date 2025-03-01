@@ -40,20 +40,26 @@ export const registerResumeDocstringGenerationCommand = (context: vscode.Extensi
         
         await ProgressService.runWithProgress(
             'Resuming Docstring Generation',
-            async (progress) => {
+            async (progress, token) => {
                 try {
                     // Get ignored patterns from .gitignore
                     const ignoredPatterns = await getIgnoredPatterns(workspaceFolder);
                     
                     // Resume docstring generation for the existing symbol index (only for empty docstrings)
-                    await resumeDocstringGeneration(workspaceFolder, ignoredPatterns, progress);
+                    await resumeDocstringGeneration(workspaceFolder, ignoredPatterns, progress, token);
+                    
+                    if (token?.isCancellationRequested) {
+                        showInformationMessage('Docstring generation was cancelled.');
+                        return;
+                    }
                     
                     showInformationMessage('Docstring generation resumed and completed successfully.');
                 } catch (error) {
                     console.error('Error resuming docstring generation:', error);
                     showErrorMessage('Error resuming docstring generation', error);
                 }
-            }
+            },
+            { cancellable: true }
         );
     });
 

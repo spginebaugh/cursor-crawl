@@ -94,7 +94,29 @@ export const DocstringGenerationService = {
       return updatedSymbols;
     } catch (error) {
       console.error('Error generating docstrings:', error);
-      throw error;
+      
+      // Create an enhanced error that includes cancellation information
+      const enhancedError = error instanceof Error 
+        ? error 
+        : new Error('Unknown error during docstring generation');
+      
+      // Add a property to indicate this error persisted after retries
+      if (error instanceof Error && 
+         (error.message.includes('after retry') || 
+          error.message.includes('All retry attempts failed'))) {
+        (enhancedError as any).shouldCancelGeneration = true;
+      }
+      
+      // Add a property for server errors that might need cancellation
+      if (error instanceof Error && 
+         (error.message.includes('500 ') || 
+          error.message.includes('502 ') ||
+          error.message.includes('503 ') ||
+          error.message.includes('504 '))) {
+        (enhancedError as any).isServerError = true;
+      }
+      
+      throw enhancedError;
     }
   },
 
