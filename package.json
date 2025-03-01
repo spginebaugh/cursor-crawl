@@ -18,6 +18,7 @@
     "onCommand:cursorcrawl.resumeDocstringGeneration",
     "onCommand:cursorcrawl.generateCodebaseContext",
     "onCommand:cursorcrawl.analyzeDuplicateLogic",
+    "onCommand:cursorcrawl.showDependencyGraph",
     "onStartupFinished",
     "workspaceContains:**/*"
   ],
@@ -55,6 +56,10 @@
       {
         "command": "cursorcrawl.analyzeDuplicateLogic",
         "title": "Analyze Duplicate Logic in Codebase"
+      },
+      {
+        "command": "cursorcrawl.showDependencyGraph",
+        "title": "Show Dependency Graph Visualization"
       }
     ],
     "configuration": {

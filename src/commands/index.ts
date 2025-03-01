@@ -5,4 +5,5 @@ export { registerGenerateDocstringIndexParallelCommand } from './generate-docstr
 export { registerExtractContextCommand } from './extract-context-command';
 export { registerResumeDocstringGenerationCommand } from './resume-docstring-generation-command';
 export { registerGenerateCodebaseContextCommand } from './generate-codebase-context-command';
-export { registerAnalyzeDuplicateLogicCommand } from './analyze-duplicate-logic-command'; 
+export { registerAnalyzeDuplicateLogicCommand } from './analyze-duplicate-logic-command';
+export { registerShowDependencyGraphCommand } from './show-dependency-graph-command'; 
