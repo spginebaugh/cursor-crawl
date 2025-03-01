@@ -17,6 +17,7 @@
     "onCommand:cursorcrawl.generateDocstringIndexParallel",
     "onCommand:cursorcrawl.resumeDocstringGeneration",
     "onCommand:cursorcrawl.generateCodebaseContext",
+    "onCommand:cursorcrawl.analyzeDuplicateLogic",
     "onStartupFinished",
     "workspaceContains:**/*"
   ],
@@ -50,6 +51,10 @@
       {
         "command": "cursorcrawl.generateCodebaseContext",
         "title": "Generate Codebase Context from Symbol Index"
+      },
+      {
+        "command": "cursorcrawl.analyzeDuplicateLogic",
+        "title": "Analyze Duplicate Logic in Codebase"
       }
     ],
     "configuration": {
@@ -82,8 +87,7 @@
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "vscode-test",
-    "docstring": "node test-docstring.js"
+    "test": "vscode-test"
   },
   "devDependencies": {
     "@types/fs-extra": "^11.0.4",

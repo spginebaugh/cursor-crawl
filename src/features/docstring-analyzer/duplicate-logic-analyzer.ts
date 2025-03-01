@@ -137,7 +137,6 @@ OUTPUT INSTRUCTIONS:
           { role: 'system', content: 'You are an expert code analyzer that identifies potentially duplicated logic in a codebase.' },
           { role: 'user', content: prompt }
         ],
-        temperature: 0.2, // Lower temperature for more deterministic output
       });
       
       return completion.choices[0].message.content || '';
