@@ -1,9 +1,8 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
 import { ProgressService } from '@/shared/services/progress-service';
 import { WorkspaceService, showErrorMessage, showInformationMessage } from '@/shared/services/workspace-service';
 import { SymbolIndexService } from '@/shared/services/symbol-index-service';
-import { generateRelevantInfo , extractAndResolveContextFiles } from '@/context-extractor';
+import { executeContextExtraction } from '@/context-extractor';
 
 
 /**
@@ -18,21 +17,6 @@ export const registerExtractContextCommand = (context: vscode.ExtensionContext):
             return;
         }
 
-        // Check if symbol index exists
-        if (!await SymbolIndexService.symbolIndexExists(workspaceFolder)) {
-            const response = await vscode.window.showErrorMessage(
-                'Symbol index not found. Would you like to run analysis first?',
-                'Yes', 'No'
-            );
-            
-            if (response === 'Yes') {
-                // Run analysis first
-                await vscode.commands.executeCommand('cursorcrawl.analyze');
-            } else {
-                return;
-            }
-        }
-        
         // Show input box for the prompt
         const promptText = await vscode.window.showInputBox({
             placeHolder: 'Enter your prompt with file references using @filename.ts syntax',
@@ -49,32 +33,51 @@ export const registerExtractContextCommand = (context: vscode.ExtensionContext):
             await ProgressService.runWithProgress(
                 "Extracting Context Information",
                 async (progress) => {
-                    progress.report({ message: "Identifying and resolving file references..." });
+                    progress.report({ message: "Processing prompt and extracting context..." });
                     
-                    // Extract and resolve context files from the prompt in one unified step
-                    const contextFiles = await extractAndResolveContextFiles(promptText, workspaceFolder);
+                    // Execute the context extraction workflow
+                    const result = await executeContextExtraction(promptText, workspaceFolder);
                     
-                    if (contextFiles.length === 0) {
-                        showInformationMessage('No file references found in prompt. Please use @filename.ts syntax to reference files.');
-                        return;
+                    if (!result.success) {
+                        // Handle specific error case for missing symbol index
+                        if (result.message.includes('Symbol index not found')) {
+                            const response = await vscode.window.showErrorMessage(
+                                'Symbol index not found. Would you like to run analysis first?',
+                                'Yes', 'No'
+                            );
+                            
+                            if (response === 'Yes') {
+                                // Run analysis first
+                                await vscode.commands.executeCommand('cursorcrawl.analyze');
+                                
+                                // Try extraction again after analysis
+                                progress.report({ message: "Re-attempting context extraction after analysis..." });
+                                const retryResult = await executeContextExtraction(promptText, workspaceFolder);
+                                
+                                if (!retryResult.success) {
+                                    showErrorMessage(retryResult.message);
+                                    return;
+                                }
+                                
+                                // Update result with retry result if successful
+                                Object.assign(result, retryResult);
+                            } else {
+                                return;
+                            }
+                        } else {
+                            showErrorMessage(result.message);
+                            return;
+                        }
                     }
                     
-                    progress.report({ message: `Found ${contextFiles.length} referenced files. Generating relevant information...` });
-                    
-                    // Generate the relevant-info.json file
-                    await generateRelevantInfo(workspaceFolder, contextFiles);
-                    
-                    progress.report({ message: "Context information extracted successfully!" });
-                    
-                    // Show the relevant files that were found
-                    showInformationMessage(
-                        `Successfully extracted context for ${contextFiles.length} files: ${contextFiles.slice(0, 3).join(', ')}${contextFiles.length > 3 ? '...' : ''}`
-                    );
+                    // Show success message
+                    showInformationMessage(result.message);
                     
                     // Open the relevant-info.json file in the editor
-                    const relevantInfoPath = path.join(WorkspaceService.getCursorTestDir(workspaceFolder), 'relevant-info.json');
-                    const document = await vscode.workspace.openTextDocument(relevantInfoPath);
-                    await vscode.window.showTextDocument(document);
+                    if (result.relevantInfoPath) {
+                        const document = await vscode.workspace.openTextDocument(result.relevantInfoPath);
+                        await vscode.window.showTextDocument(document);
+                    }
                 }
             );
         } catch (error) {

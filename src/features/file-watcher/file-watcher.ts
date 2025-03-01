@@ -5,6 +5,7 @@ import { FileSystemService } from '@/shared/services/file-system-service';
 import { ProjectService } from '@/shared/services/project-service';
 import { SymbolIndexOrchestrator } from '@/features/symbol-index/symbol-index-orchestrator';
 import { ensureProjectAnalysis } from '@/shared/utils/project-analysis';
+import { SymbolIndexService } from '@/shared/services/symbol-index-service';
 
 /**
  * Sets up a file system watcher to automatically update project analysis when files change
@@ -21,6 +22,19 @@ export const setupFileWatcher = (context: vscode.ExtensionContext): void => {
     // Shared symbol index state for incremental updates
     let symbolIndexCache: SymbolIndex | undefined = undefined;
     
+    // Initialize symbolIndexCache from on-disk file if available
+    const initializeSymbolIndexCache = async () => {
+        try {
+            const onDiskIndex = await SymbolIndexService.readSymbolIndex(workspaceFolder);
+            if (onDiskIndex) {
+                symbolIndexCache = onDiskIndex;
+                console.log('Initialized symbol index cache from on-disk file');
+            }
+        } catch (error) {
+            console.error('Error initializing symbol index cache:', error);
+        }
+    };
+    
     // Debounce to avoid too many updates
     let debounceTimer: NodeJS.Timeout | null = null;
     const updateProjectAnalysis = async (changedFile?: string) => {
@@ -30,6 +44,11 @@ export const setupFileWatcher = (context: vscode.ExtensionContext): void => {
         
         debounceTimer = setTimeout(async () => {
             try {
+                // Ensure we have the latest on-disk version before updating when a file changes
+                if (changedFile && !symbolIndexCache) {
+                    await initializeSymbolIndexCache();
+                }
+                
                 // Use the refactored project analysis workflow
                 const result = await ensureProjectAnalysis(workspaceFolder, {
                     generateDocstrings: false,
@@ -56,8 +75,10 @@ export const setupFileWatcher = (context: vscode.ExtensionContext): void => {
     watcher.onDidChange((uri) => updateProjectAnalysis(uri.fsPath));
     watcher.onDidDelete((uri) => updateProjectAnalysis(uri.fsPath));
     
-    // Generate analysis on startup
-    updateProjectAnalysis();
+    // Initialize cache from disk and then generate analysis on startup
+    initializeSymbolIndexCache().then(() => {
+        updateProjectAnalysis();
+    });
     
     context.subscriptions.push(watcher);
 }; 

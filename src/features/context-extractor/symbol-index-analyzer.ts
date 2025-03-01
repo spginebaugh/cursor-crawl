@@ -98,7 +98,7 @@ export const SymbolIndexAnalyzer = {
     for (const filePath in filteredIndex) {
       const fileSymbols = filteredIndex[filePath];
       
-      if (!fileSymbols) continue;
+      if (!fileSymbols) {continue;}
       
       for (const symbol of fileSymbols) {
         // Process dependencies (files this file imports from)
@@ -123,7 +123,7 @@ export const SymbolIndexAnalyzer = {
   ): void {
     for (const dependency of symbol.depends_on || []) {
       const sourceFile = dependency.filePath;
-      if (!sourceFile || sourceFile === filePath) continue;
+      if (!sourceFile || sourceFile === filePath) {continue;}
       
       // Add to the set of relevant files
       relevantFiles.add(sourceFile);
@@ -160,7 +160,7 @@ export const SymbolIndexAnalyzer = {
   ): void {
     for (const dependent of symbol.dependents || []) {
       const targetFile = dependent.filePath;
-      if (!targetFile || targetFile === filePath) continue;
+      if (!targetFile || targetFile === filePath) {continue;}
       
       // Add to the set of relevant files
       relevantFiles.add(targetFile);

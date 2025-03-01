@@ -33,6 +33,9 @@ export const SymbolIndexOrchestrator = {
         projectFiles.length = MAX_FILES_TO_PROCESS;
       }
       
+      // First check if there's an existing symbol index to preserve docstrings
+      const existingSymbolIndex = await SymbolIndexService.readSymbolIndex(rootPath);
+      
       // Initialize the symbol index with file-based organization
       const symbolIndex: SymbolIndex = {};
       
@@ -59,9 +62,13 @@ export const SymbolIndexOrchestrator = {
           rootPath
         );
         
+        // Preserve docstrings from existing symbol index if available
+        const existingFileSymbols = existingSymbolIndex?.[normalizedPath] || [];
+        const mergedSymbols = this.mergeDocstrings(existingFileSymbols, symbols);
+        
         // Initialize file entry in the index
-        if (symbols.length > 0) {
-          symbolIndex[normalizedPath] = symbols;
+        if (mergedSymbols.length > 0) {
+          symbolIndex[normalizedPath] = mergedSymbols;
         }
       }
       
@@ -88,8 +95,14 @@ export const SymbolIndexOrchestrator = {
     ignoredPatterns: string[] = []
   ): Promise<SymbolIndex> {
     try {
-      // Create a deep copy of the existing index to avoid modifying the original
-      const updatedIndex: SymbolIndex = JSON.parse(JSON.stringify(existingIndex));
+      // Read the on-disk symbol index to preserve any manually added docstrings
+      const onDiskSymbolIndex = await SymbolIndexService.readSymbolIndex(rootPath);
+      
+      // Create a deep copy of the existing index to avoid modifying the original,
+      // but prioritize the on-disk index if available to preserve manual edits
+      const updatedIndex: SymbolIndex = onDiskSymbolIndex 
+        ? JSON.parse(JSON.stringify(onDiskSymbolIndex)) 
+        : JSON.parse(JSON.stringify(existingIndex));
       
       // Normalize the changed file path
       const normalizedChangedPath = FileSystemService.normalizeFilePath(changedFilePath, rootPath);
@@ -105,8 +118,15 @@ export const SymbolIndexOrchestrator = {
         return this.handleDeletedFile(updatedIndex, normalizedChangedPath, rootPath);
       }
       
-      // Store existing symbols from the changed file
+      // Store existing symbols from both the in-memory cache and the on-disk file 
       const existingFileSymbols = updatedIndex[normalizedChangedPath] || [];
+      const inMemoryFileSymbols = existingIndex[normalizedChangedPath] || [];
+      
+      // Combine docstrings from both sources, prioritizing on-disk version
+      const combinedExistingSymbols = this.mergeExistingSymbols(
+        existingFileSymbols,
+        inMemoryFileSymbols
+      );
       
       // Remove the changed file from the index
       delete updatedIndex[normalizedChangedPath];
@@ -122,7 +142,7 @@ export const SymbolIndexOrchestrator = {
       );
       
       // Merge docstrings from existing symbols to new symbols
-      const mergedSymbols = this.mergeDocstrings(existingFileSymbols, newSymbols);
+      const mergedSymbols = this.mergeDocstrings(combinedExistingSymbols, newSymbols);
       
       // Add merged symbols to the index
       if (mergedSymbols.length > 0) {
@@ -139,6 +159,41 @@ export const SymbolIndexOrchestrator = {
       // If anything goes wrong during the update, return the original index unchanged
       return existingIndex;
     }
+  },
+
+  /**
+   * Merges symbols from the on-disk and in-memory caches, prioritizing the on-disk version
+   * @param onDiskSymbols - Symbols from the on-disk symbol index
+   * @param inMemorySymbols - Symbols from the in-memory cache
+   * @returns Combined symbols with preserved docstrings
+   */
+  mergeExistingSymbols(
+    onDiskSymbols: SymbolIndexEntry[],
+    inMemorySymbols: SymbolIndexEntry[]
+  ): SymbolIndexEntry[] {
+    // Start with all symbols from in-memory cache
+    const result = [...inMemorySymbols];
+    
+    // For each on-disk symbol, either update or add it to the result
+    for (const onDiskSymbol of onDiskSymbols) {
+      const existingIndex = result.findIndex(
+        s => s.name === onDiskSymbol.name && s.type === onDiskSymbol.type
+      );
+      
+      if (existingIndex >= 0) {
+        // Update existing symbol, prioritizing on-disk docstring
+        if (onDiskSymbol.docstring && 
+            onDiskSymbol.docstring !== '/** */' && 
+            onDiskSymbol.docstring !== '') {
+          result[existingIndex].docstring = onDiskSymbol.docstring;
+        }
+      } else {
+        // Add on-disk symbol not found in in-memory cache
+        result.push(onDiskSymbol);
+      }
+    }
+    
+    return result;
   },
 
   /**

@@ -145,20 +145,22 @@ export async function ensureOpenAIApiKey(
 }
 
 /**
- * Generates docstring index
- * @param rootPath - The workspace root path
+ * Generates docstrings for symbols in the index
+ * @param rootPath - Path to the project root
  * @param ignoredPatterns - Patterns to ignore
  * @param progress - Optional progress reporter
+ * @param token - Optional cancellation token
  * @returns Whether the operation was successful
  */
 export async function generateDocstrings(
     rootPath: string,
     ignoredPatterns: string[],
-    progress?: vscode.Progress<{ message: string }>
+    progress?: vscode.Progress<{ message: string }>,
+    token?: vscode.CancellationToken
 ): Promise<boolean> {
     try {
         progress?.report({ message: 'Generating docstrings...' });
-        await generateDocstringIndex(rootPath, ignoredPatterns, progress);
+        await generateDocstringIndex(rootPath, ignoredPatterns, progress, token);
         return true;
     } catch (error) {
         console.error('Error generating docstrings:', error);

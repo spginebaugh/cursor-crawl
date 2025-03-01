@@ -63,6 +63,12 @@ export const generateDocstrings = async ({
     
     // Process files one by one
     for (const filePath in symbolIndex) {
+      // Check for cancellation before processing each file
+      if (progress?.isCancelled?.()) {
+        progress?.report({ message: 'Docstring generation cancelled.' });
+        return;
+      }
+      
       fileCount++;
       
       // Get symbols for this file
@@ -116,6 +122,12 @@ export const generateDocstrings = async ({
           client
         });
         
+        // Check for cancellation after processing symbols
+        if (progress?.isCancelled?.()) {
+          progress?.report({ message: 'Docstring generation cancelled.' });
+          return;
+        }
+        
         // Update the symbol index with generated docstrings
         for (const updatedSymbol of updatedSymbols) {
           // Find the actual symbol in the fileSymbols array
@@ -140,6 +152,12 @@ export const generateDocstrings = async ({
       }
     }
     
+    // Check for cancellation before final reporting
+    if (progress?.isCancelled?.()) {
+      progress?.report({ message: 'Docstring generation cancelled.' });
+      return;
+    }
+    
     const getCompletionMessage = () => {
       if (mode === DocstringGenerationMode.GENERATE_MISSING) {
         return `Docstring generation complete. Generated ${processedSymbolCount} docstrings, skipped ${skippedSymbolCount} existing docstrings.`;
@@ -158,12 +176,14 @@ export const generateDocstrings = async ({
  * @param rootPath - Path to the project root
  * @param ignoredPatterns - Patterns to ignore during file processing
  * @param progress - Optional progress reporter
+ * @param token - Optional cancellation token
  * @param mode - Docstring generation mode
  */
 export const generateDocstringsUnified = async (
   rootPath: string,
   ignoredPatterns: string[] = [],
   progress?: vscode.Progress<{ message?: string }>,
+  token?: vscode.CancellationToken,
   mode: DocstringGenerationMode = DocstringGenerationMode.GENERATE_ALL
 ): Promise<void> => {
   try {
@@ -215,7 +235,7 @@ export const generateDocstringsUnified = async (
       client,
       projectFiles,
       rootPath,
-      progress: progress ? adaptVSCodeProgress(progress) : undefined,
+      progress: progress ? adaptVSCodeProgress(progress, token) : undefined,
       mode
     });
     
@@ -235,16 +255,19 @@ export const generateDocstringsUnified = async (
  * @param rootPath - Path to the project root
  * @param ignoredPatterns - Patterns to ignore during file processing
  * @param progress - Optional progress reporter
+ * @param token - Optional cancellation token
  */
 export const generateDocstringIndex = async (
   rootPath: string,
   ignoredPatterns: string[] = [],
-  progress?: vscode.Progress<{ message?: string }>
+  progress?: vscode.Progress<{ message?: string }>,
+  token?: vscode.CancellationToken
 ): Promise<void> => {
   return generateDocstringsUnified(
     rootPath,
     ignoredPatterns,
     progress,
+    token,
     DocstringGenerationMode.GENERATE_ALL
   );
 };
@@ -254,16 +277,19 @@ export const generateDocstringIndex = async (
  * @param rootPath - Path to the project root
  * @param ignoredPatterns - Patterns to ignore during file processing
  * @param progress - Optional progress reporter
+ * @param token - Optional cancellation token
  */
 export const resumeDocstringGeneration = async (
   rootPath: string,
   ignoredPatterns: string[] = [],
-  progress?: vscode.Progress<{ message?: string }>
+  progress?: vscode.Progress<{ message?: string }>,
+  token?: vscode.CancellationToken
 ): Promise<void> => {
   return generateDocstringsUnified(
     rootPath,
     ignoredPatterns,
     progress,
+    token,
     DocstringGenerationMode.GENERATE_MISSING
   );
 };

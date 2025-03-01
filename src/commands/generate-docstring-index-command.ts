@@ -39,24 +39,33 @@ export const registerGenerateDocstringIndexCommand = (context: vscode.ExtensionC
         
         await ProgressService.runWithProgress(
             'Generating Docstring Index',
-            async (progress) => {
+            async (progress, token) => {
                 try {
                     // Get ignored patterns from .gitignore
                     const ignoredPatterns = await getIgnoredPatterns(workspaceFolder);
                     
                     // Generate docstrings for the existing symbol index
-                    const success = await generateDocstrings(workspaceFolder, ignoredPatterns, progress);
+                    const success = await generateDocstrings(workspaceFolder, ignoredPatterns, progress, token);
+                    
+                    if (token?.isCancellationRequested) {
+                        showInformationMessage('Docstring generation was cancelled.');
+                        return false;
+                    }
                     
                     if (success) {
                         showInformationMessage('Docstrings generated successfully.');
                     } else {
                         showErrorMessage('Failed to generate docstrings.');
                     }
+                    
+                    return success;
                 } catch (error) {
                     console.error('Error generating docstring index:', error);
                     showErrorMessage('Error generating docstring index', error);
+                    return false;
                 }
-            }
+            },
+            { cancellable: true }
         );
     });
 

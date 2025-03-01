@@ -9,6 +9,12 @@ export interface ProgressReporter {
    * @param info - The progress information to report
    */
   report: (info: { message: string }) => void;
+  
+  /**
+   * Checks if the operation has been cancelled
+   * @returns True if the operation has been cancelled, false otherwise
+   */
+  isCancelled?: () => boolean;
 }
 
 /**
@@ -21,14 +27,20 @@ export type VSCodeProgressReporter = vscode.Progress<{ message?: string }>;
  * @returns A progress reporter that does nothing
  */
 export const createNullProgressReporter = (): ProgressReporter => ({
-  report: () => {}
+  report: () => {},
+  isCancelled: () => false
 });
 
 /**
  * Adapts a VSCode progress reporter to match the ProgressReporter interface
  * @param vscodeProgress - The VSCode progress reporter to adapt
+ * @param token - Optional cancellation token for the operation
  * @returns A progress reporter that forwards to the VSCode progress reporter
  */
-export const adaptVSCodeProgress = (vscodeProgress: VSCodeProgressReporter): ProgressReporter => ({
-  report: (info: { message: string }) => vscodeProgress.report({ message: info.message })
+export const adaptVSCodeProgress = (
+  vscodeProgress: VSCodeProgressReporter, 
+  token?: vscode.CancellationToken
+): ProgressReporter => ({
+  report: (info: { message: string }) => vscodeProgress.report({ message: info.message }),
+  isCancelled: token ? () => token.isCancellationRequested : undefined
 }); 
