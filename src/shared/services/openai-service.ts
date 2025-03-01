@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as dotenv from 'dotenv';
 import OpenAI from 'openai';
 import * as vscode from 'vscode';
-import { SymbolIndexEntry } from '@/types/symbol-index';
+import { SymbolIndexEntry } from '@/shared/types/symbol-index';
 import { zodResponseFormat } from 'openai/helpers/zod';
 import { z } from 'zod';
 

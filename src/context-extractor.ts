@@ -1,9 +1,9 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import { DependencyMap } from '@/types/dependency-map';
-import { SymbolIndexEntry, SymbolIndex } from '@/types/symbol-index';
-import { RelevantInfo } from '@/types/relevant-info';
-import { FileSystemService } from '@/services/file-system-service';
+import { DependencyMap } from '@/shared/types/dependency-map';
+import { SymbolIndexEntry, SymbolIndex } from '@/shared/types/symbol-index';
+import { RelevantInfo } from '@/shared/types/relevant-info';
+import { FileSystemService } from '@/shared/services/file-system-service';
 
 
 /**

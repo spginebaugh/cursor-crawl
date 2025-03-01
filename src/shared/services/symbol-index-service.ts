@@ -1,7 +1,7 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import { SymbolIndex } from '@/types/symbol-index';
-import { WorkspaceService } from '@/services/workspace-service';
+import { SymbolIndex } from '@/shared/types/symbol-index';
+import { WorkspaceService } from '@/shared/services/workspace-service';
 
 // Constants
 const SYMBOL_INDEX_FILENAME = 'symbol-index.json';

@@ -205,5 +205,19 @@ export const FileSystemService = {
     });
     
     return result;
+  },
+
+  /**
+   * Checks if a file exists
+   * @param filePath - Path to the file
+   * @returns Whether the file exists
+   */
+  async fileExists(filePath: string): Promise<boolean> {
+    try {
+      const stats = await fs.stat(filePath);
+      return stats.isFile();
+    } catch (error) {
+      return false;
+    }
   }
 }; 

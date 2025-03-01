@@ -2,18 +2,111 @@
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { createSymbolIndex, updateSymbolIndex } from '@/symbol-index';
-import { generateDocstringIndex, resumeDocstringGeneration } from '@/generate-docstring';
-import { SymbolIndex } from '@/types/symbol-index';
+import { createSymbolIndex, updateSymbolIndex } from '@/features/symbol-index/symbol-index';
+import { generateDocstringIndex, resumeDocstringGeneration } from '@/features/generate-docstring/generate-docstring';
+import { SymbolIndex } from '@/shared/types/symbol-index';
 import { extractContextFiles, generateRelevantInfo } from '@/context-extractor';
 
 // Import services
-import { FileSystemService } from '@/services/file-system-service';
-import { WorkspaceService, showInformationMessage, showErrorMessage } from '@/services/workspace-service';
-import { OpenAiService } from '@/services/openai-service';
-import { ProgressService } from '@/services/progress-service';
-import { ProjectService } from '@/services/project-service';
-import { SymbolIndexService } from '@/services/symbol-index-service';
+import { FileSystemService } from '@/shared/services/file-system-service';
+import { WorkspaceService, showInformationMessage, showErrorMessage } from '@/shared/services/workspace-service';
+import { OpenAiService } from '@/shared/services/openai-service';
+import { ProgressService } from '@/shared/services/progress-service';
+import { ProjectService } from '@/shared/services/project-service';
+import { SymbolIndexService } from '@/shared/services/symbol-index-service';
+import { SymbolIndexOrchestrator } from '@/features/symbol-index/symbol-index-orchestrator';
+
+/**
+ * Ensures project analysis artifacts are generated and up-to-date
+ * @param rootPath - The workspace root path
+ * @param options - Optional configuration
+ * @returns Whether the operation was successful
+ */
+async function ensureProjectAnalysis(
+	rootPath: string,
+	options: {
+		generateDocstrings?: boolean;
+		showMessages?: boolean;
+		progress?: vscode.Progress<{ message: string }>;
+	} = {}
+): Promise<boolean> {
+	const { generateDocstrings = false, showMessages = true, progress } = options;
+	
+	try {
+		// Create .cursortest directory if it doesn't exist
+		await WorkspaceService.ensureCursorTestDir(rootPath);
+		
+		// Parse .gitignore
+		const ignoredPatterns = await FileSystemService.parseGitignore(rootPath);
+		
+		// Generate project tree
+		progress?.report({ message: 'Generating project tree...' });
+		const treeContent = await ProjectService.generateProjectTree(rootPath, ignoredPatterns);
+		
+		// Write project tree to file
+		await WorkspaceService.writeCursorTestFile(rootPath, 'project-tree.mdc', `# Project Tree\n\n\`\`\`\n${treeContent}\`\`\`\n`);
+		
+		// Generate symbol index
+		progress?.report({ message: 'Building symbol index...' });
+		await createSymbolIndex(rootPath, ignoredPatterns, progress);
+		
+		// If docstrings are requested, generate them
+		if (generateDocstrings) {
+			// Check for OpenAI API key
+			const envVars = OpenAiService.loadEnvironmentVars(rootPath);
+			if (!envVars.OPENAI_API_KEY) {
+				if (showMessages) {
+					const setKey = await vscode.window.showErrorMessage(
+						'OpenAI API key not found. Would you like to set it now?',
+						'Yes', 'No'
+					);
+					
+					if (setKey === 'Yes') {
+						const apiKey = await vscode.window.showInputBox({
+							prompt: 'Enter your OpenAI API Key',
+							password: true,
+							ignoreFocusOut: true
+						});
+						
+						if (apiKey) {
+							await vscode.workspace.getConfiguration('cursorcrawl').update('openaiApiKey', apiKey, vscode.ConfigurationTarget.Global);
+						} else {
+							if (showMessages) {
+								showInformationMessage('Symbol Index built successfully (without docstrings).');
+							}
+							return true;
+						}
+					} else {
+						if (showMessages) {
+							showInformationMessage('Symbol Index built successfully (without docstrings).');
+						}
+						return true;
+					}
+				} else {
+					return true; // Skip docstrings but consider it a success
+				}
+			}
+			
+			// Generate docstrings
+			progress?.report({ message: 'Generating docstrings...' });
+			await generateDocstringIndex(rootPath, ignoredPatterns, progress);
+			
+			if (showMessages) {
+				showInformationMessage('Project analysis completed successfully with docstrings!');
+			}
+		} else if (showMessages) {
+			showInformationMessage('Project analysis completed successfully (without docstrings).');
+		}
+		
+		return true;
+	} catch (error) {
+		console.error('Error in project analysis:', error);
+		if (showMessages) {
+			showErrorMessage('Error generating project analysis', error);
+		}
+		return false;
+	}
+}
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -30,74 +123,29 @@ export function activate(context: vscode.ExtensionContext) {
 
 		const rootPath = workspaceFolders[0].uri.fsPath;
 		
-		try {
-			// Create .cursortest directory if it doesn't exist
-			await WorkspaceService.ensureCursorTestDir(rootPath);
-			
-			// Parse .gitignore
-			const ignoredPatterns = await FileSystemService.parseGitignore(rootPath);
-			
-			// Generate project tree
-			const treeContent = await ProjectService.generateProjectTree(rootPath, ignoredPatterns);
-			
-			// Write project tree to file
-			await WorkspaceService.writeCursorTestFile(rootPath, 'project-tree.mdc', `# Project Tree\n\n\`\`\`\n${treeContent}\`\`\`\n`);
-			
-			// Ask if docstrings should be generated
-			const generateDocstrings = await vscode.window.showQuickPick(
-				[
-					{ label: 'Yes', description: 'Build symbol index and generate docstrings' },
-					{ label: 'No', description: 'Build symbol index only (no AI-generated docstrings)' }
-				],
-				{ placeHolder: 'Would you like to generate docstrings? This requires an OpenAI API key.' }
-			);
-			
-			if (!generateDocstrings) {
-				return; // User canceled
-			}
-			
-			// Generate symbol index
-			await createSymbolIndex(rootPath, ignoredPatterns);
-			
-			// If docstrings are requested, generate them
-			if (generateDocstrings.label === 'Yes') {
-				// Check for OpenAI API key
-				const envVars = OpenAiService.loadEnvironmentVars(rootPath);
-				if (!envVars.OPENAI_API_KEY) {
-					const setKey = await vscode.window.showErrorMessage(
-						'OpenAI API key not found. Would you like to set it now?',
-						'Yes', 'No'
-					);
-					
-					if (setKey === 'Yes') {
-						const apiKey = await vscode.window.showInputBox({
-							prompt: 'Enter your OpenAI API Key',
-							password: true,
-							ignoreFocusOut: true
-						});
-						
-						if (apiKey) {
-							await vscode.workspace.getConfiguration('cursorcrawl').update('openaiApiKey', apiKey, vscode.ConfigurationTarget.Global);
-						} else {
-							showInformationMessage('Symbol Index built successfully (without docstrings).');
-							return;
-						}
-					} else {
-						showInformationMessage('Symbol Index built successfully (without docstrings).');
-						return;
-					}
-				}
-				
-				// Generate docstrings
-				await generateDocstringIndex(rootPath, ignoredPatterns);
-				showInformationMessage('Project analysis completed successfully with docstrings!');
-			} else {
-				showInformationMessage('Project analysis completed successfully (without docstrings).');
-			}
-		} catch (error) {
-			console.error('Error generating project tree and symbol index:', error);
-			showErrorMessage('Error generating project analysis', error);
+		// Ask if docstrings should be generated
+		const generateDocstrings = await vscode.window.showQuickPick(
+			[
+				{ label: 'Yes', description: 'Build symbol index and generate docstrings' },
+				{ label: 'No', description: 'Build symbol index only (no AI-generated docstrings)' }
+			],
+			{ placeHolder: 'Would you like to generate docstrings? This requires an OpenAI API key.' }
+		);
+		
+		if (!generateDocstrings) {
+			return; // User canceled
 		}
+		
+		await ProgressService.runWithProgress(
+			'Analyzing Project',
+			async (progress) => {
+				await ensureProjectAnalysis(rootPath, {
+					generateDocstrings: generateDocstrings.label === 'Yes',
+					showMessages: true,
+					progress
+				});
+			}
+		);
 	});
 
 	// Register the build symbol index command
@@ -110,23 +158,14 @@ export function activate(context: vscode.ExtensionContext) {
 		
 		const rootPath = workspaceFolders[0].uri.fsPath;
 		
-		// Get ignored patterns from .gitignore
-		const ignoredPatterns = await FileSystemService.parseGitignore(rootPath);
-		
 		await ProgressService.runWithProgress(
 			'Building Symbol Index',
 			async (progress) => {
-				try {
-					progress.report({ message: 'Analyzing project structure...' });
-					
-					// Create the symbol index without docstrings
-					await createSymbolIndex(rootPath, ignoredPatterns, progress);
-					
-					showInformationMessage('Symbol Index built successfully (without docstrings).');
-				} catch (error) {
-					console.error('Error building symbol index:', error);
-					showErrorMessage('Error building symbol index', error);
-				}
+				await ensureProjectAnalysis(rootPath, {
+					generateDocstrings: false,
+					showMessages: true,
+					progress
+				});
 			}
 		);
 	});
@@ -338,7 +377,7 @@ export function activate(context: vscode.ExtensionContext) {
 					// Update symbol index
 					// If we have a symbol index cache and a specific file changed, do incremental update
 					if (symbolIndexCache && changedFile) {
-						symbolIndexCache = await updateSymbolIndex(
+						symbolIndexCache = await SymbolIndexOrchestrator.updateSymbolIndex(
 							workspaceFolder,
 							symbolIndexCache,
 							changedFile,
@@ -346,7 +385,7 @@ export function activate(context: vscode.ExtensionContext) {
 						);
 					} else {
 						// Otherwise do a full rebuild
-						symbolIndexCache = await createSymbolIndex(workspaceFolder, ignoredPatterns);
+						symbolIndexCache = await SymbolIndexOrchestrator.createSymbolIndex(workspaceFolder, ignoredPatterns);
 					}
 					
 					console.log('Project analysis updated automatically.');

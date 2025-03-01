@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
-import { WorkspaceService } from '@/services/workspace-service';
-import { FileSystemService, execAsync } from '@/services/file-system-service';
-import { SymbolIndexService } from '@/services/symbol-index-service';
-import { OpenAiService } from '@/services/openai-service';
+import { WorkspaceService } from '@/shared/services/workspace-service';
+import { FileSystemService, execAsync } from '@/shared/services/file-system-service';
+import { SymbolIndexService } from '@/shared/services/symbol-index-service';
+import { OpenAiService } from '@/shared/services/openai-service';
 
 /**
  * Project initialization result type

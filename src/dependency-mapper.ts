@@ -1,15 +1,15 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import * as ts from 'typescript';
-import { DependencyMap, FileDependencyInfo, ImportInfo } from '@/types/dependency-map';
+import { DependencyMap, FileDependencyInfo, ImportInfo } from '@/shared/types/dependency-map';
 import { 
   ANALYZABLE_EXTENSIONS, 
   ALWAYS_IGNORED_DIRS, 
   MAX_FILES_TO_PROCESS,
   FileSystemService
-} from './services/file-system-service';
-import { TsAnalyzerService } from './services/ts-analyzer-service';
-import { WorkspaceService } from './services/workspace-service';
+} from './shared/services/file-system-service';
+import { TsAnalyzerService } from './shared/services/ts-analyzer-service';
+import { WorkspaceService } from './shared/services/workspace-service';
 
 /**
  * Creates a complete dependency map for a project
