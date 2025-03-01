@@ -1,97 +1,19 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
-import * as fs from 'fs-extra';
 import * as path from 'path';
-import { createSymbolIndex, updateSymbolIndex } from './symbol-index';
-import { generateDocstringIndex } from './generate-docstring';
-import { SymbolIndex } from './types/symbol-index';
-import { extractContextFiles, generateRelevantInfo } from './context-extractor';
-import { 
-	parseGitignore, 
-	buildTreeFromPaths, 
-	formatTree, 
-	execAsync 
-} from './utils/file-system';
-import {
-	getWorkspaceFolder,
-	ensureCursorTestDir,
-	writeCursorTestFile,
-	showInformationMessage,
-	showErrorMessage
-} from './utils/workspace';
-import { loadEnvironmentVars } from './utils/openai';
+import { createSymbolIndex, updateSymbolIndex } from '@/symbol-index';
+import { generateDocstringIndex, resumeDocstringGeneration } from '@/generate-docstring';
+import { SymbolIndex } from '@/types/symbol-index';
+import { extractContextFiles, generateRelevantInfo } from '@/context-extractor';
 
-// Function to generate a project tree respecting .gitignore rules
-const generateProjectTree = async (rootPath: string, ignoredPatterns: string[]): Promise<string> => {
-	try {
-		// Use git ls-files to get a list of files not ignored by gitignore
-		// If git is not available, this will throw an error and we'll use a fallback
-		const { stdout } = await execAsync('git ls-files', { cwd: rootPath });
-		const files = stdout.split('\n').filter(Boolean);
-		
-		// Build the tree structure
-		const tree = buildTreeFromPaths(files);
-		return formatTree(tree);
-	} catch (error) {
-		console.error('Error using git ls-files, using fallback method:', error);
-		
-		// Fallback: manually traverse the directory
-		const tree = await traverseDirectory(rootPath, '', ignoredPatterns);
-		return formatTree(tree);
-	}
-};
-
-// Function to traverse directory and build a tree structure (fallback method)
-const traverseDirectory = async (
-	rootPath: string, 
-	relativePath: string = '', 
-	ignoredPatterns: string[]
-): Promise<Record<string, any>> => {
-	const currentPath = path.join(rootPath, relativePath);
-	const tree: Record<string, any> = {};
-	
-	const isIgnored = (itemPath: string): boolean => {
-		const relPath = path.relative(rootPath, itemPath);
-		return ignoredPatterns.some(pattern => {
-			// Simple pattern matching (can be enhanced for more complex gitignore rules)
-			if (pattern.endsWith('/')) {
-				// Directory pattern
-				return relPath.startsWith(pattern) || relPath.includes(`/${pattern}`);
-			}
-			// File pattern
-			return relPath === pattern || relPath.endsWith(`/${pattern}`) || 
-				   // Handle wildcard patterns like *.vsix
-				   (pattern.startsWith('*') && relPath.endsWith(pattern.substring(1)));
-		});
-	};
-	
-	try {
-		const items = await fs.readdir(currentPath);
-		
-		for (const item of items) {
-			const itemPath = path.join(currentPath, item);
-			const itemRelativePath = relativePath ? path.join(relativePath, item) : item;
-			
-			if (isIgnored(itemPath)) {
-				continue;
-			}
-			
-			const stats = await fs.stat(itemPath);
-			
-			if (stats.isDirectory()) {
-				tree[item] = await traverseDirectory(rootPath, itemRelativePath, ignoredPatterns);
-			} else {
-				tree[item] = null; // null indicates it's a file
-			}
-		}
-		
-		return tree;
-	} catch (error) {
-		console.error(`Error traversing directory ${currentPath}:`, error);
-		return {};
-	}
-};
+// Import services
+import { FileSystemService } from '@/services/file-system-service';
+import { WorkspaceService, showInformationMessage, showErrorMessage } from '@/services/workspace-service';
+import { OpenAiService } from '@/services/openai-service';
+import { ProgressService } from '@/services/progress-service';
+import { ProjectService } from '@/services/project-service';
+import { SymbolIndexService } from '@/services/symbol-index-service';
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -110,16 +32,16 @@ export function activate(context: vscode.ExtensionContext) {
 		
 		try {
 			// Create .cursortest directory if it doesn't exist
-			await ensureCursorTestDir(rootPath);
+			await WorkspaceService.ensureCursorTestDir(rootPath);
 			
 			// Parse .gitignore
-			const ignoredPatterns = await parseGitignore(rootPath);
+			const ignoredPatterns = await FileSystemService.parseGitignore(rootPath);
 			
 			// Generate project tree
-			const treeContent = await generateProjectTree(rootPath, ignoredPatterns);
+			const treeContent = await ProjectService.generateProjectTree(rootPath, ignoredPatterns);
 			
 			// Write project tree to file
-			await writeCursorTestFile(rootPath, 'project-tree.mdc', `# Project Tree\n\n\`\`\`\n${treeContent}\`\`\`\n`);
+			await WorkspaceService.writeCursorTestFile(rootPath, 'project-tree.mdc', `# Project Tree\n\n\`\`\`\n${treeContent}\`\`\`\n`);
 			
 			// Ask if docstrings should be generated
 			const generateDocstrings = await vscode.window.showQuickPick(
@@ -140,7 +62,7 @@ export function activate(context: vscode.ExtensionContext) {
 			// If docstrings are requested, generate them
 			if (generateDocstrings.label === 'Yes') {
 				// Check for OpenAI API key
-				const envVars = loadEnvironmentVars(rootPath);
+				const envVars = OpenAiService.loadEnvironmentVars(rootPath);
 				if (!envVars.OPENAI_API_KEY) {
 					const setKey = await vscode.window.showErrorMessage(
 						'OpenAI API key not found. Would you like to set it now?',
@@ -189,47 +111,43 @@ export function activate(context: vscode.ExtensionContext) {
 		const rootPath = workspaceFolders[0].uri.fsPath;
 		
 		// Get ignored patterns from .gitignore
-		const ignoredPatterns = await parseGitignore(rootPath);
+		const ignoredPatterns = await FileSystemService.parseGitignore(rootPath);
 		
-		vscode.window.withProgress({
-			location: vscode.ProgressLocation.Notification,
-			title: 'Building Symbol Index',
-			cancellable: false
-		}, async (progress) => {
-			try {
-				progress.report({ message: 'Analyzing project structure...' });
-				
-				// Create the symbol index without docstrings
-				await createSymbolIndex(rootPath, ignoredPatterns, progress);
-				
-				showInformationMessage('Symbol Index built successfully (without docstrings).');
-			} catch (error) {
-				console.error('Error building symbol index:', error);
-				showErrorMessage('Error building symbol index', error);
+		await ProgressService.runWithProgress(
+			'Building Symbol Index',
+			async (progress) => {
+				try {
+					progress.report({ message: 'Analyzing project structure...' });
+					
+					// Create the symbol index without docstrings
+					await createSymbolIndex(rootPath, ignoredPatterns, progress);
+					
+					showInformationMessage('Symbol Index built successfully (without docstrings).');
+				} catch (error) {
+					console.error('Error building symbol index:', error);
+					showErrorMessage('Error building symbol index', error);
+				}
 			}
-		});
+		);
 	});
 
 	// Register the generate docstring index command
 	const generateDocstringIndexCommand = vscode.commands.registerCommand('cursorcrawl.generateDocstringIndex', async () => {
-		const workspaceFolder = getWorkspaceFolder();
+		const workspaceFolder = WorkspaceService.getWorkspaceFolder();
 		if (!workspaceFolder) {
 			showErrorMessage('No workspace folder open.');
 			return;
 		}
 		
 		// Load environment variables
-		const envVars = loadEnvironmentVars(workspaceFolder);
+		const envVars = OpenAiService.loadEnvironmentVars(workspaceFolder);
 		if (!envVars.OPENAI_API_KEY) {
 			showErrorMessage('OpenAI API key not found. Please set it in .env.local or in settings.');
 			return;
 		}
 		
 		// Check if symbol index exists
-		const cursorTestDir = path.join(workspaceFolder, '.cursortest');
-		const symbolIndexPath = path.join(cursorTestDir, 'symbol-index.json');
-		
-		if (!await fs.pathExists(symbolIndexPath)) {
+		if (!await SymbolIndexService.symbolIndexExists(workspaceFolder)) {
 			const response = await vscode.window.showErrorMessage(
 				'Symbol index not found. Would you like to build the symbol index first?',
 				'Yes', 'No'
@@ -243,39 +161,35 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 		}
 		
-		vscode.window.withProgress({
-			location: vscode.ProgressLocation.Notification,
-			title: 'Generating Docstring Index',
-			cancellable: false
-		}, async (progress) => {
-			try {
-				// Get ignored patterns from .gitignore
-				const ignoredPatterns = await parseGitignore(workspaceFolder);
-				
-				// Generate docstrings for the existing symbol index
-				await generateDocstringIndex(workspaceFolder, ignoredPatterns, progress);
-				
-				showInformationMessage('Docstrings generated successfully.');
-			} catch (error) {
-				console.error('Error generating docstring index:', error);
-				showErrorMessage('Error generating docstring index', error);
+		await ProgressService.runWithProgress(
+			'Generating Docstring Index',
+			async (progress) => {
+				try {
+					// Get ignored patterns from .gitignore
+					const ignoredPatterns = await FileSystemService.parseGitignore(workspaceFolder);
+					
+					// Generate docstrings for the existing symbol index
+					await generateDocstringIndex(workspaceFolder, ignoredPatterns, progress);
+					
+					showInformationMessage('Docstrings generated successfully.');
+				} catch (error) {
+					console.error('Error generating docstring index:', error);
+					showErrorMessage('Error generating docstring index', error);
+				}
 			}
-		});
+		);
 	});
 
 	// Register the extract context command
 	const extractContextCommand = vscode.commands.registerCommand('cursorcrawl.extractContext', async () => {
-		const workspaceFolder = getWorkspaceFolder();
+		const workspaceFolder = WorkspaceService.getWorkspaceFolder();
 		if (!workspaceFolder) {
 			showErrorMessage('No workspace folder found. Please open a folder first.');
 			return;
 		}
 
 		// Check if symbol index exists
-		const cursorTestDir = path.join(workspaceFolder, '.cursortest');
-		const symbolIndexPath = path.join(cursorTestDir, 'symbol-index.json');
-		
-		if (!await fs.pathExists(symbolIndexPath)) {
+		if (!await SymbolIndexService.symbolIndexExists(workspaceFolder)) {
 			const response = await vscode.window.showErrorMessage(
 				'Symbol index not found. Would you like to run analysis first?',
 				'Yes', 'No'
@@ -302,12 +216,8 @@ export function activate(context: vscode.ExtensionContext) {
 		
 		try {
 			// Show progress indicator
-			await vscode.window.withProgress(
-				{
-					location: vscode.ProgressLocation.Notification,
-					title: "Extracting Context Information",
-					cancellable: false
-				},
+			await ProgressService.runWithProgress(
+				"Extracting Context Information",
 				async (progress) => {
 					progress.report({ message: "Identifying referenced files..." });
 					
@@ -332,7 +242,7 @@ export function activate(context: vscode.ExtensionContext) {
 					);
 					
 					// Open the relevant-info.json file in the editor
-					const relevantInfoPath = path.join(cursorTestDir, 'relevant-info.json');
+					const relevantInfoPath = path.join(WorkspaceService.getCursorTestDir(workspaceFolder), 'relevant-info.json');
 					const document = await vscode.workspace.openTextDocument(relevantInfoPath);
 					await vscode.window.showTextDocument(document);
 				}
@@ -343,9 +253,58 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	});
 
+	// Register the resume docstring generation command
+	const resumeDocstringGenerationCommand = vscode.commands.registerCommand('cursorcrawl.resumeDocstringGeneration', async () => {
+		const workspaceFolder = WorkspaceService.getWorkspaceFolder();
+		if (!workspaceFolder) {
+			showErrorMessage('No workspace folder open.');
+			return;
+		}
+		
+		// Load environment variables
+		const envVars = OpenAiService.loadEnvironmentVars(workspaceFolder);
+		if (!envVars.OPENAI_API_KEY) {
+			showErrorMessage('OpenAI API key not found. Please set it in .env.local or in settings.');
+			return;
+		}
+		
+		// Check if symbol index exists
+		if (!await SymbolIndexService.symbolIndexExists(workspaceFolder)) {
+			const response = await vscode.window.showErrorMessage(
+				'Symbol index not found. Would you like to build the symbol index first?',
+				'Yes', 'No'
+			);
+			
+			if (response === 'Yes') {
+				// Run build symbol index first
+				await vscode.commands.executeCommand('cursorcrawl.buildSymbolIndex');
+			} else {
+				return;
+			}
+		}
+		
+		await ProgressService.runWithProgress(
+			'Resuming Docstring Generation',
+			async (progress) => {
+				try {
+					// Get ignored patterns from .gitignore
+					const ignoredPatterns = await FileSystemService.parseGitignore(workspaceFolder);
+					
+					// Resume docstring generation for the existing symbol index (only for empty docstrings)
+					await resumeDocstringGeneration(workspaceFolder, ignoredPatterns, progress);
+					
+					showInformationMessage('Docstring generation resumed and completed successfully.');
+				} catch (error) {
+					console.error('Error resuming docstring generation:', error);
+					showErrorMessage('Error resuming docstring generation', error);
+				}
+			}
+		);
+	});
+
 	// Set up file system watcher
 	const setupFileWatcher = () => {
-		const workspaceFolder = getWorkspaceFolder();
+		const workspaceFolder = WorkspaceService.getWorkspaceFolder();
 		if (!workspaceFolder) {
 			return;
 		}
@@ -365,16 +324,16 @@ export function activate(context: vscode.ExtensionContext) {
 			debounceTimer = setTimeout(async () => {
 				try {
 					// Create .cursortest directory if it doesn't exist
-					await ensureCursorTestDir(workspaceFolder);
+					await WorkspaceService.ensureCursorTestDir(workspaceFolder);
 					
 					// Parse .gitignore
-					const ignoredPatterns = await parseGitignore(workspaceFolder);
+					const ignoredPatterns = await FileSystemService.parseGitignore(workspaceFolder);
 					
 					// Generate project tree
-					const treeContent = await generateProjectTree(workspaceFolder, ignoredPatterns);
+					const treeContent = await ProjectService.generateProjectTree(workspaceFolder, ignoredPatterns);
 					
 					// Write project tree to file
-					await writeCursorTestFile(workspaceFolder, 'project-tree.mdc', `# Project Tree\n\n\`\`\`\n${treeContent}\`\`\`\n`);
+					await WorkspaceService.writeCursorTestFile(workspaceFolder, 'project-tree.mdc', `# Project Tree\n\n\`\`\`\n${treeContent}\`\`\`\n`);
 					
 					// Update symbol index
 					// If we have a symbol index cache and a specific file changed, do incremental update
@@ -411,10 +370,14 @@ export function activate(context: vscode.ExtensionContext) {
 	// Initialize watcher when extension is activated
 	setupFileWatcher();
 
-	context.subscriptions.push(analyzeCommand);
-	context.subscriptions.push(buildSymbolIndexCommand);
-	context.subscriptions.push(generateDocstringIndexCommand);
-	context.subscriptions.push(extractContextCommand);
+	// Store commands in subscriptions to ensure proper disposal
+	context.subscriptions.push(
+		analyzeCommand,
+		buildSymbolIndexCommand,
+		generateDocstringIndexCommand,
+		extractContextCommand,
+		resumeDocstringGenerationCommand
+	);
 }
 
 // This method is called when your extension is deactivated

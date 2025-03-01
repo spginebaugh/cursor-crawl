@@ -14,6 +14,7 @@
     "onCommand:cursorcrawl.buildSymbolIndex",
     "onCommand:cursorcrawl.extractContext",
     "onCommand:cursorcrawl.generateDocstringIndex",
+    "onCommand:cursorcrawl.resumeDocstringGeneration",
     "onStartupFinished",
     "workspaceContains:**/*"
   ],
@@ -35,6 +36,10 @@
       {
         "command": "cursorcrawl.generateDocstringIndex",
         "title": "Generate Docstrings for Symbol Index"
+      },
+      {
+        "command": "cursorcrawl.resumeDocstringGeneration",
+        "title": "Resume Docstring Generation (Fill Empty Only)"
       }
     ],
     "configuration": {

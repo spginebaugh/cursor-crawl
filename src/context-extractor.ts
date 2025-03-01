@@ -1,21 +1,10 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import * as ts from 'typescript';
-import { FileDependencyInfo, DependencyMap } from './types/dependency-map';
-import { SymbolIndexEntry, SymbolIndex } from './types/symbol-index';
-import { RelevantInfo } from './types/relevant-info';
-import { 
-  isAnalyzableFile, 
-  normalizeFilePath, 
-  getProjectFiles,
-  execAsync
-} from './utils/file-system';
-import { 
-  getLineNumber,
-  extractCodeSnippet,
-  getContextSnippet
-} from './utils/ts-analyzer';
-import { getWorkspaceFolder } from './utils/workspace';
+import { DependencyMap } from '@/types/dependency-map';
+import { SymbolIndexEntry, SymbolIndex } from '@/types/symbol-index';
+import { RelevantInfo } from '@/types/relevant-info';
+import { FileSystemService } from '@/services/file-system-service';
+
 
 /**
  * Extracts context file references from a prompt string
@@ -256,7 +245,7 @@ export const generateRelevantInfo = async (
   };
   
   for (const filePath of uniqueFiles) {
-    if (!isAnalyzableFile(filePath)) {
+    if (!FileSystemService.isAnalyzableFile(filePath)) {
       continue;
     }
     
@@ -297,7 +286,7 @@ const findFilesMatchingPattern = async (rootPath: string, pattern: string): Prom
     // Try searching for the file name in the project
     const fileName = path.basename(pattern);
     const extension = path.extname(fileName);
-    const files = await getProjectFiles(rootPath);
+    const files = await FileSystemService.getProjectFiles(rootPath);
     
     return files
       .filter(file => path.basename(file) === fileName)
@@ -306,7 +295,7 @@ const findFilesMatchingPattern = async (rootPath: string, pattern: string): Prom
   
   // Handle wildcard patterns
   const extension = pattern.includes('.') ? path.extname(pattern) : '.ts';
-  const files = await getProjectFiles(rootPath);
+  const files = await FileSystemService.getProjectFiles(rootPath);
   const filteredFiles = files.filter(file => path.extname(file) === extension);
   
   // Convert glob pattern to regex
@@ -323,7 +312,7 @@ const extractRelevantSymbols = async (
   filePath: string,
   symbolIndex: SymbolIndex,
 ): Promise<SymbolIndexEntry[]> => {
-  const normalizedPath = normalizeFilePath(filePath, rootPath);
+  const normalizedPath = FileSystemService.normalizeFilePath(filePath, rootPath);
   
   // Get symbols for the specified file
   const fileSymbols = symbolIndex[normalizedPath] || [];
@@ -337,7 +326,7 @@ const extractDependencies = (
   rootPath: string,
   dependencyMap: DependencyMap,
 ): { imports: string[]; dependencies: string[] } => {
-  const normalizedPath = normalizeFilePath(filePath, rootPath);
+  const normalizedPath = FileSystemService.normalizeFilePath(filePath, rootPath);
   
   // Get file info from dependency map
   const fileInfo = dependencyMap.files[normalizedPath];

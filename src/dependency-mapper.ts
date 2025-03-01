@@ -1,17 +1,15 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import * as ts from 'typescript';
-import { DependencyMap, FileDependencyInfo, ImportInfo } from './types/dependency-map';
+import { DependencyMap, FileDependencyInfo, ImportInfo } from '@/types/dependency-map';
 import { 
   ANALYZABLE_EXTENSIONS, 
   ALWAYS_IGNORED_DIRS, 
   MAX_FILES_TO_PROCESS,
-  normalizeFilePath,
-  isAnalyzableFile,
-  getProjectFiles
-} from './utils/file-system';
-import { arraysHaveSameItems } from './utils/ts-analyzer';
-import { writeCursorTestFile } from './utils/workspace';
+  FileSystemService
+} from './services/file-system-service';
+import { TsAnalyzerService } from './services/ts-analyzer-service';
+import { WorkspaceService } from './services/workspace-service';
 
 /**
  * Creates a complete dependency map for a project
@@ -22,7 +20,7 @@ export const createDependencyMap = async (
 ): Promise<DependencyMap> => {
   try {
     // Get all project files
-    const projectFiles = await getProjectFiles(rootPath, ignoredPatterns);
+    const projectFiles = await FileSystemService.getProjectFiles(rootPath, ignoredPatterns);
     
     // Safety check - if there are too many files, log a warning and limit processing
     if (projectFiles.length > MAX_FILES_TO_PROCESS) {
@@ -35,10 +33,10 @@ export const createDependencyMap = async (
     
     // Process each file to build the dependency graph
     for (const filePath of projectFiles) {
-      const normalizedPath = normalizeFilePath(filePath, rootPath);
+      const normalizedPath = FileSystemService.normalizeFilePath(filePath, rootPath);
       
       // Skip if not a file we should analyze
-      if (!isAnalyzableFile(normalizedPath)) {
+      if (!FileSystemService.isAnalyzableFile(normalizedPath)) {
         continue;
       }
       
@@ -77,7 +75,7 @@ export const createDependencyMap = async (
     }
     
     // Write the dependency map to file
-    await writeCursorTestFile(rootPath, 'dependency-map.json', dependencyMap);
+    await WorkspaceService.writeCursorTestFile(rootPath, 'dependency-map.json', dependencyMap);
     
     return dependencyMap;
   } catch (error) {
@@ -100,10 +98,10 @@ export const updateDependencyMap = async (
     const updatedMap: DependencyMap = JSON.parse(JSON.stringify(existingMap));
     
     // Normalize the changed file path
-    const normalizedChangedPath = normalizeFilePath(changedFilePath, rootPath);
+    const normalizedChangedPath = FileSystemService.normalizeFilePath(changedFilePath, rootPath);
     
     // Skip if not a file we should analyze
-    if (!isAnalyzableFile(normalizedChangedPath)) {
+    if (!FileSystemService.isAnalyzableFile(normalizedChangedPath)) {
       return updatedMap;
     }
     
@@ -144,7 +142,7 @@ export const updateDependencyMap = async (
     for (const oldImport of oldImports) {
       const stillImported = newImports.some(newImport => 
         newImport.from === oldImport.from && 
-        arraysHaveSameItems(newImport.imports, oldImport.imports)
+        TsAnalyzerService.arraysHaveSameItems(newImport.imports, oldImport.imports)
       );
       
       if (!stillImported && updatedMap.files[oldImport.from]) {
@@ -159,7 +157,7 @@ export const updateDependencyMap = async (
     for (const newImport of newImports) {
       const wasAlreadyImported = oldImports.some(oldImport => 
         oldImport.from === newImport.from && 
-        arraysHaveSameItems(oldImport.imports, newImport.imports)
+        TsAnalyzerService.arraysHaveSameItems(oldImport.imports, newImport.imports)
       );
       
       if (!wasAlreadyImported) {
@@ -214,7 +212,7 @@ const parseFileImports = async (
 ): Promise<ImportInfo[]> => {
   try {
     // Skip non-analyzable files
-    if (!isAnalyzableFile(filePath)) {
+    if (!FileSystemService.isAnalyzableFile(filePath)) {
       return [];
     }
     
@@ -288,7 +286,7 @@ const parseFileImports = async (
                   }
                 }
                 
-                const normalizedPath = normalizeFilePath(resolvedPath, rootPath);
+                const normalizedPath = FileSystemService.normalizeFilePath(resolvedPath, rootPath);
                 const importKey = `${normalizedPath}|${importedSymbols.join(',')}`;
                 
                 // Avoid duplicate imports
@@ -327,7 +325,7 @@ const parseFileImports = async (
                   exportedSymbols.push('*');
                 }
                 
-                const normalizedPath = normalizeFilePath(resolvedPath, rootPath);
+                const normalizedPath = FileSystemService.normalizeFilePath(resolvedPath, rootPath);
                 const importKey = `${normalizedPath}|${exportedSymbols.join(',')}`;
                 
                 // Avoid duplicate imports

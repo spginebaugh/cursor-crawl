@@ -1,35 +1,15 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import * as ts from 'typescript';
-import * as vscode from 'vscode';
 
-// Import types and utilities
+// Import types and services
 import {
   SymbolIndexEntry,
-  DependentInfo,
-  DependencyInfo,
   SymbolIndex
-} from './types/symbol-index';
-import {
-  ANALYZABLE_EXTENSIONS,
-  ALWAYS_IGNORED_DIRS,
-  MAX_FILES_TO_PROCESS,
-  isAnalyzableFile,
-  normalizeFilePath,
-  getProjectFiles,
-  isIgnored
-} from './utils/file-system';
-import {
-  computeLineStarts,
-  getLineNumber,
-  extractCodeSnippet,
-  getContextSnippet,
-  getLineAndCharacter
-} from './utils/ts-analyzer';
-import {
-  writeCursorTestFile,
-  ensureCursorTestDir
-} from './utils/workspace';
+} from '@/types/symbol-index';
+import { FileSystemService, MAX_FILES_TO_PROCESS } from '@/services/file-system-service';
+import { TsAnalyzerService } from '@/services/ts-analyzer-service';
+import { SymbolIndexService } from '@/services/symbol-index-service';
 
 // Output directory and file for the symbol index
 const OUTPUT_DIR = '.cursortest';
@@ -51,7 +31,7 @@ export const createSymbolIndex = async (
     progress?.report({ message: 'Analyzing project structure...' });
     
     // Get all project files
-    const projectFiles = await getProjectFiles(rootPath, ignoredPatterns);
+    const projectFiles = await FileSystemService.getProjectFiles(rootPath, ignoredPatterns);
     
     // Safety check - limit number of files to process
     if (projectFiles.length > MAX_FILES_TO_PROCESS) {
@@ -68,7 +48,7 @@ export const createSymbolIndex = async (
       const filePath = projectFiles[i];
       
       // Skip files we shouldn't analyze
-      if (!isAnalyzableFile(filePath)) {
+      if (!FileSystemService.isAnalyzableFile(filePath)) {
         continue;
       }
       
@@ -76,7 +56,7 @@ export const createSymbolIndex = async (
         message: `Processing file ${i + 1}/${projectFiles.length}: ${path.basename(filePath)}` 
       });
       
-      const normalizedPath = normalizeFilePath(filePath, rootPath);
+      const normalizedPath = FileSystemService.normalizeFilePath(filePath, rootPath);
       
       // Extract symbols from the file
       const symbols = await extractSymbols(filePath, normalizedPath, rootPath);
@@ -104,6 +84,28 @@ export const createSymbolIndex = async (
 };
 
 /**
+ * Extracts JSDoc comment from a node if present
+ * @param node - The TypeScript node
+ * @param sourceFile - The source file
+ * @returns The JSDoc comment text or empty string
+ */
+const extractJSDocComment = (node: ts.Node, sourceFile: ts.SourceFile): string => {
+  const jsDocComments = ts.getJSDocCommentsAndTags(node) as ts.JSDoc[];
+  
+  if (jsDocComments && jsDocComments.length > 0) {
+    // Get the first JSDoc comment
+    const jsDoc = jsDocComments[0];
+    
+    // Extract the JSDoc text
+    if (jsDoc.getFullText) {
+      return jsDoc.getFullText(sourceFile);
+    }
+  }
+  
+  return '';
+};
+
+/**
  * Extracts symbols from a file
  * @param filePath - Path to the file
  * @param normalizedPath - Normalized file path relative to project root
@@ -117,7 +119,7 @@ const extractSymbols = async (
 ): Promise<SymbolIndexEntry[]> => {
   try {
     // Skip non-analyzable files
-    if (!isAnalyzableFile(filePath)) {
+    if (!FileSystemService.isAnalyzableFile(filePath)) {
       return [];
     }
     
@@ -143,21 +145,23 @@ const extractSymbols = async (
     // Recursively visit nodes to extract symbols
     const visit = (node: ts.Node) => {
       try {
-        // Skip nodes that already have documentation comments
+        // Check if node has JSDoc comments
         const hasJSDoc = ts.getJSDocTags(node).length > 0;
+        // Extract JSDoc comment text if present
+        const jsDocComment = hasJSDoc ? extractJSDocComment(node, sourceFile) : '';
         
         // Extract function declarations
         if (ts.isFunctionDeclaration(node) && node.name) {
           const name = node.name.text;
-          const location = getLineAndCharacter(sourceFile, node);
-          const snippet = extractCodeSnippet(sourceFile, node);
+          const location = TsAnalyzerService.getLineAndCharacter(sourceFile, node);
+          const snippet = TsAnalyzerService.extractCodeSnippet(sourceFile, node);
           
           symbols.push({
             name,
             type: 'function',
             filePath: normalizedPath,
             location,
-            docstring: hasJSDoc ? '' : '/** */', // Placeholder
+            docstring: jsDocComment || '/** */', // Use actual JSDoc or placeholder
             snippet,
             dependents: [],
             depends_on: []
@@ -167,15 +171,15 @@ const extractSymbols = async (
         // Extract class declarations
         else if (ts.isClassDeclaration(node) && node.name) {
           const name = node.name.text;
-          const location = getLineAndCharacter(sourceFile, node);
-          const snippet = extractCodeSnippet(sourceFile, node);
+          const location = TsAnalyzerService.getLineAndCharacter(sourceFile, node);
+          const snippet = TsAnalyzerService.extractCodeSnippet(sourceFile, node);
           
           symbols.push({
             name,
             type: 'class',
             filePath: normalizedPath,
             location,
-            docstring: hasJSDoc ? '' : '/** */', // Placeholder
+            docstring: jsDocComment || '/** */', // Use actual JSDoc or placeholder
             snippet,
             dependents: [],
             depends_on: []
@@ -186,15 +190,16 @@ const extractSymbols = async (
             if (ts.isMethodDeclaration(member) && member.name) {
               const methodName = member.name.getText(sourceFile);
               const methodHasJSDoc = ts.getJSDocTags(member).length > 0;
-              const location = getLineAndCharacter(sourceFile, member);
-              const snippet = extractCodeSnippet(sourceFile, member);
+              const methodJSDocComment = methodHasJSDoc ? extractJSDocComment(member, sourceFile) : '';
+              const location = TsAnalyzerService.getLineAndCharacter(sourceFile, member);
+              const snippet = TsAnalyzerService.extractCodeSnippet(sourceFile, member);
               
               symbols.push({
                 name: `${name}.${methodName}`,
                 type: 'method',
                 filePath: normalizedPath,
                 location,
-                docstring: methodHasJSDoc ? '' : '/** */', // Placeholder
+                docstring: methodJSDocComment || '/** */', // Use actual JSDoc or placeholder
                 snippet,
                 dependents: [],
                 depends_on: []
@@ -206,15 +211,15 @@ const extractSymbols = async (
         // Extract interface declarations
         else if (ts.isInterfaceDeclaration(node) && node.name) {
           const name = node.name.text;
-          const location = getLineAndCharacter(sourceFile, node);
-          const snippet = extractCodeSnippet(sourceFile, node);
+          const location = TsAnalyzerService.getLineAndCharacter(sourceFile, node);
+          const snippet = TsAnalyzerService.extractCodeSnippet(sourceFile, node);
           
           symbols.push({
             name,
             type: 'interface',
             filePath: normalizedPath,
             location,
-            docstring: hasJSDoc ? '' : '/** */', // Placeholder
+            docstring: jsDocComment || '/** */', // Use actual JSDoc or placeholder
             snippet,
             dependents: [],
             depends_on: []
@@ -224,15 +229,15 @@ const extractSymbols = async (
         // Extract type aliases
         else if (ts.isTypeAliasDeclaration(node) && node.name) {
           const name = node.name.text;
-          const location = getLineAndCharacter(sourceFile, node);
-          const snippet = extractCodeSnippet(sourceFile, node);
+          const location = TsAnalyzerService.getLineAndCharacter(sourceFile, node);
+          const snippet = TsAnalyzerService.extractCodeSnippet(sourceFile, node);
           
           symbols.push({
             name,
             type: 'type',
             filePath: normalizedPath,
             location,
-            docstring: hasJSDoc ? '' : '/** */', // Placeholder
+            docstring: jsDocComment || '/** */', // Use actual JSDoc or placeholder
             snippet,
             dependents: [],
             depends_on: []
@@ -242,15 +247,15 @@ const extractSymbols = async (
         // Extract enum declarations
         else if (ts.isEnumDeclaration(node) && node.name) {
           const name = node.name.text;
-          const location = getLineAndCharacter(sourceFile, node);
-          const snippet = extractCodeSnippet(sourceFile, node);
+          const location = TsAnalyzerService.getLineAndCharacter(sourceFile, node);
+          const snippet = TsAnalyzerService.extractCodeSnippet(sourceFile, node);
           
           symbols.push({
             name,
             type: 'enum',
             filePath: normalizedPath,
             location,
-            docstring: hasJSDoc ? '' : '/** */', // Placeholder
+            docstring: jsDocComment || '/** */', // Use actual JSDoc or placeholder
             snippet,
             dependents: [],
             depends_on: []
@@ -263,15 +268,16 @@ const extractSymbols = async (
             if (ts.isIdentifier(declaration.name)) {
               const name = declaration.name.text;
               const varHasJSDoc = ts.getJSDocTags(declaration).length > 0;
-              const location = getLineAndCharacter(sourceFile, declaration);
-              const snippet = extractCodeSnippet(sourceFile, declaration);
+              const varJSDocComment = varHasJSDoc ? extractJSDocComment(declaration, sourceFile) : '';
+              const location = TsAnalyzerService.getLineAndCharacter(sourceFile, declaration);
+              const snippet = TsAnalyzerService.extractCodeSnippet(sourceFile, declaration);
               
               symbols.push({
                 name,
                 type: 'variable',
                 filePath: normalizedPath,
                 location,
-                docstring: varHasJSDoc ? '' : '/** */', // Placeholder
+                docstring: varJSDocComment || '/** */', // Use actual JSDoc or placeholder
                 snippet,
                 dependents: [],
                 depends_on: []
@@ -309,44 +315,52 @@ const resolveDependencies = async (
   rootPath: string
 ): Promise<void> => {
   try {
-    // Create a flat map of all symbols for easy lookup
+    // Create a TypeScript compiler host and program for symbol resolution
+    const compilerOptions: ts.CompilerOptions = {
+      target: ts.ScriptTarget.Latest,
+      module: ts.ModuleKind.CommonJS,
+      allowJs: true,
+      checkJs: false,
+      esModuleInterop: true,
+      moduleResolution: ts.ModuleResolutionKind.NodeJs,
+    };
+
+    // Only include analyzable files in the program
+    const analyzableFiles = projectFiles.filter(file => FileSystemService.isAnalyzableFile(file));
+    
+    // Create program and type checker
+    const program = ts.createProgram(analyzableFiles, compilerOptions);
+    const typeChecker = program.getTypeChecker();
+    
+    // Create a flat map of all symbols for easy lookup (by name and file path)
     const flatSymbolMap: Record<string, SymbolIndexEntry> = {};
     
-    // Build the symbol map
+    // Build the symbol map with compound keys for uniqueness
     for (const filePath in symbolIndex) {
       for (const symbol of symbolIndex[filePath]) {
-        flatSymbolMap[`${filePath}:${symbol.name}`] = symbol;
+        const key = `${filePath}:${symbol.name}`;
+        flatSymbolMap[key] = symbol;
       }
     }
     
     // Process each file to find dependencies
     for (const filePath of projectFiles) {
-      if (!isAnalyzableFile(filePath)) {
+      if (!FileSystemService.isAnalyzableFile(filePath)) {
         continue;
       }
       
-      const normalizedPath = normalizeFilePath(filePath, rootPath);
+      const normalizedPath = FileSystemService.normalizeFilePath(filePath, rootPath);
       
       // Skip if the file isn't in our index
       if (!symbolIndex[normalizedPath]) {
         continue;
       }
       
-      // Read the file content
-      const fileContent = await fs.readFile(filePath, 'utf8');
-      
-      // Skip files that are too large
-      if (fileContent.length > 1000000) { // 1MB limit
+      // Get the source file from the program
+      const sourceFile = program.getSourceFile(filePath);
+      if (!sourceFile) {
         continue;
       }
-      
-      // Create a TypeScript source file
-      const sourceFile = ts.createSourceFile(
-        filePath,
-        fileContent,
-        ts.ScriptTarget.Latest,
-        true
-      );
       
       // Track current enclosing symbol
       let currentSymbol: SymbolIndexEntry | null = null;
@@ -380,51 +394,77 @@ const resolveDependencies = async (
               return;
             }
             
-            // Find all potential target symbols
-            const targetSymbols: SymbolIndexEntry[] = [];
-            
-            for (const filePath in symbolIndex) {
-              const fileSymbols = symbolIndex[filePath];
-              for (const symbol of fileSymbols) {
-                if (symbol.name === identifierName) {
-                  targetSymbols.push(symbol);
-                }
-              }
-            }
-            
-            if (targetSymbols.length === 0) {
-              return;
-            }
-            
             // Handle function/method calls
             if (ts.isCallExpression(node.parent) && node.parent.expression === node) {
               const position = node.getStart(sourceFile);
-              const lineNumber = getLineNumber(sourceFile, position);
-              const contextSnippet = getContextSnippet(sourceFile, position, 3);
+              const lineNumber = TsAnalyzerService.getLineNumber(sourceFile, position);
+              const contextSnippet = TsAnalyzerService.getContextSnippet(sourceFile, position, 3);
               
-              for (const targetSymbol of targetSymbols) {
-                // Skip self-references
-                if (currentSymbol === targetSymbol) {
-                  continue;
-                }
-                
-                // Add dependency relationship if current symbol is defined
-                if (currentSymbol) {
-                  // Add to current symbol's depends_on list
-                  currentSymbol.depends_on.push({
-                    name: targetSymbol.name,
-                    filePath: targetSymbol.filePath,
-                    line: lineNumber
-                  });
-                  
-                  // Add to target symbol's dependents list
-                  targetSymbol.dependents.push({
-                    name: currentSymbol.name,
-                    filePath: currentSymbol.filePath,
-                    line: lineNumber,
-                    contextSnippet
-                  });
-                }
+              // Try to resolve the symbol using TypeScript's type checker
+              const symbol = typeChecker.getSymbolAtLocation(node);
+              if (!symbol) {
+                return;
+              }
+              
+              // Get the declaration of the symbol
+              const declarations = symbol.getDeclarations();
+              if (!declarations || declarations.length === 0) {
+                return;
+              }
+              
+              // Find the source file of the declaration
+              const declarationSourceFile = declarations[0].getSourceFile();
+              if (!declarationSourceFile) {
+                return;
+              }
+              
+              // Skip if it's an external library
+              const isNodeModule = declarationSourceFile.fileName.includes('node_modules');
+              if (isNodeModule) {
+                return;
+              }
+              
+              // Get normalized path of the declaration
+              const declarationPath = FileSystemService.normalizeFilePath(declarationSourceFile.fileName, rootPath);
+              
+              // Find the target symbol entry in our index
+              const targetFileSymbols = symbolIndex[declarationPath] || [];
+              const targetSymbol = targetFileSymbols.find(s => s.name === identifierName);
+              
+              if (!targetSymbol || !currentSymbol) {
+                return;
+              }
+              
+              // Skip self-references
+              if (currentSymbol.name === targetSymbol.name && currentSymbol.filePath === targetSymbol.filePath) {
+                return;
+              }
+              
+              // Add dependency relationship
+              const existingDependency = currentSymbol.depends_on.find(
+                dep => dep.name === targetSymbol.name && dep.filePath === targetSymbol.filePath
+              );
+              
+              if (!existingDependency) {
+                currentSymbol.depends_on.push({
+                  name: targetSymbol.name,
+                  filePath: targetSymbol.filePath,
+                  line: lineNumber
+                });
+              }
+              
+              // Add to target symbol's dependents list
+              const existingDependent = targetSymbol.dependents.find(
+                dep => dep.name === currentSymbol!.name && dep.filePath === currentSymbol!.filePath
+              );
+              
+              if (!existingDependent) {
+                targetSymbol.dependents.push({
+                  name: currentSymbol.name,
+                  filePath: currentSymbol.filePath,
+                  line: lineNumber,
+                  contextSnippet
+                });
               }
             }
           }
@@ -456,11 +496,8 @@ const writeSymbolIndex = async (
   symbolIndex: SymbolIndex
 ): Promise<void> => {
   try {
-    // Create the output directory if it doesn't exist
-    await ensureCursorTestDir(rootPath);
-    
-    // Write the index to file
-    await writeCursorTestFile(rootPath, OUTPUT_FILE, symbolIndex);
+    // Write the index to file using the service
+    await SymbolIndexService.writeSymbolIndex(rootPath, symbolIndex);
     
     console.log(`Symbol index written to ${path.join(rootPath, OUTPUT_DIR, OUTPUT_FILE)}`);
   } catch (error) {
@@ -488,10 +525,10 @@ export const updateSymbolIndex = async (
     const updatedIndex: SymbolIndex = JSON.parse(JSON.stringify(existingIndex));
     
     // Normalize the changed file path
-    const normalizedChangedPath = normalizeFilePath(changedFilePath, rootPath);
+    const normalizedChangedPath = FileSystemService.normalizeFilePath(changedFilePath, rootPath);
     
     // Skip if not a file we should analyze
-    if (!isAnalyzableFile(changedFilePath)) {
+    if (!FileSystemService.isAnalyzableFile(changedFilePath)) {
       return updatedIndex;
     }
     
@@ -515,7 +552,7 @@ export const updateSymbolIndex = async (
           
           // Remove dependencies on deleted symbols
           symbol.depends_on = symbol.depends_on.filter(dep => 
-            !deletedSymbols.some(s => s.name === dep.name)
+            dep.filePath !== normalizedChangedPath
           );
         }
       }
@@ -526,15 +563,36 @@ export const updateSymbolIndex = async (
       return updatedIndex;
     }
     
+    // Store existing symbols from the changed file to preserve docstrings
+    const existingFileSymbols = updatedIndex[normalizedChangedPath] || [];
+    
     // Remove all symbols from the changed file
     delete updatedIndex[normalizedChangedPath];
     
     // Extract new symbols from the changed file
     const newSymbols = await extractSymbols(changedFilePath, normalizedChangedPath, rootPath);
     
-    // Add new symbols to the index
-    if (newSymbols.length > 0) {
-      updatedIndex[normalizedChangedPath] = newSymbols;
+    // Preserve docstrings from existing symbols when they match new symbols
+    const mergedSymbols = newSymbols.map(newSymbol => {
+      // Try to find a matching symbol in the existing file symbols
+      const existingSymbol = existingFileSymbols.find(
+        existing => existing.name === newSymbol.name && existing.type === newSymbol.type
+      );
+      
+      // If a match is found and it has a non-empty docstring, preserve it
+      if (existingSymbol && existingSymbol.docstring && existingSymbol.docstring !== '/** */' && existingSymbol.docstring !== '') {
+        return {
+          ...newSymbol,
+          docstring: existingSymbol.docstring
+        };
+      }
+      
+      return newSymbol;
+    });
+    
+    // Add merged symbols to the index
+    if (mergedSymbols.length > 0) {
+      updatedIndex[normalizedChangedPath] = mergedSymbols;
     }
     
     // Remove dependencies involving the changed file
@@ -551,22 +609,17 @@ export const updateSymbolIndex = async (
           dependent => dependent.filePath !== normalizedChangedPath
         );
         
-        // Keep dependencies on symbols in other files
+        // Remove dependencies on symbols in changed file
         symbol.depends_on = symbol.depends_on.filter(dep => 
-          !newSymbols.some(s => s.name === dep.name)
+          dep.filePath !== normalizedChangedPath
         );
       }
     }
     
-    // Resolve dependencies for the changed file
-    const projectFiles = [changedFilePath];
-    for (const filePath in updatedIndex) {
-      const fullPath = path.join(rootPath, filePath);
-      if (await fs.pathExists(fullPath) && fullPath !== changedFilePath) {
-        projectFiles.push(fullPath);
-      }
-    }
+    // Get all project files to resolve dependencies
+    const projectFiles = await FileSystemService.getProjectFiles(rootPath, ignoredPatterns);
     
+    // Resolve dependencies using our updated method
     await resolveDependencies(updatedIndex, projectFiles, rootPath);
     
     // Write the updated index to file
