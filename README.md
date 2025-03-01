@@ -106,6 +106,7 @@ You can author your README using Visual Studio Code. Here are some useful editor
 
 ## To do:
 - visualizations
+- try gemini
 - improve user interface and config
 - intellegent.cursor/rules generation
 - add linter-like functionality
@@ -114,6 +115,7 @@ You can author your README using Visual Studio Code. Here are some useful editor
 - file and directory level summaries for full tree
 - bi-directional context writing
 - cyclomatic complexity
+- try RAG
 - smart binning for docstring creation so docstrings can contain more context about function use
 - Improve handling of updating code
 - code smell detection
