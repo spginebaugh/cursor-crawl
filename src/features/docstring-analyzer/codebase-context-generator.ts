@@ -30,11 +30,6 @@ export interface CodebaseContextEntry {
    * Generated docstring for the symbol
    */
   docstring: string;
-
-  /**
-   * Original code snippet
-   */
-  snippet: string;
 }
 
 /**
@@ -71,8 +66,7 @@ export const CodebaseContextService = {
       name: entry.name,
       type: entry.type,
       filePath: entry.filePath,
-      docstring: entry.docstring,
-      snippet: entry.snippet
+      docstring: entry.docstring
     };
   },
 
