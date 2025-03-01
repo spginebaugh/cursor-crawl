@@ -3,6 +3,7 @@
 This is the README for your extension "cursorcrawl". After writing up a brief description, we recommend including the following sections.
 
 ## Motivation
+Current coding tools are made for humans. However, with the advent and continuous improvement of LLMs and tools like Cursor, Windsurf, Cline, and many others, code will be primarily written -- and read -- by AI. 
 
 ## Features
 

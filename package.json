@@ -16,6 +16,7 @@
     "onCommand:cursorcrawl.generateDocstringIndex",
     "onCommand:cursorcrawl.generateDocstringIndexParallel",
     "onCommand:cursorcrawl.resumeDocstringGeneration",
+    "onCommand:cursorcrawl.generateCodebaseContext",
     "onStartupFinished",
     "workspaceContains:**/*"
   ],
@@ -45,6 +46,10 @@
       {
         "command": "cursorcrawl.resumeDocstringGeneration",
         "title": "Resume Docstring Generation (Fill Empty Only)"
+      },
+      {
+        "command": "cursorcrawl.generateCodebaseContext",
+        "title": "Generate Codebase Context from Symbol Index"
       }
     ],
     "configuration": {
