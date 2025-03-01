@@ -12,7 +12,7 @@ I am writing this README at ~2am, so expect spelling errors.
 ## Motivation
 Current coding tools are made for humans. However, with the advent and continuous improvement of LLMs, and the development of tools like Cursor, Windsurf, Cline, and many others, code will be primarily written -- and read -- by AI. 
 
-Eventually, the goal is that AI tools will be able to sense their own inputs, outputs, and code (through something like MCP) -- in which case the code itself is the documentation. However, we are still far from that point -- and openAIs recent underwhelming release of gpt-4.5 doesn't create a lot of confidence that this future is right arround the corner. 
+Eventually, the goal is that AI tools will be able to sense their own inputs, outputs, and code (through something like MCP) -- in which case the code itself is the documentation. However, we are still far from that point -- and openAIs recent underwhelming release of gpt-4.5 doesn't create a lot of confidence that this future is right around the corner. 
 
 In addition, the use of AI-assisted programming tools should change the way we approach documentation. The gold standard of well-documented code for humans may actually be bad form for writing with AI. For example, if we look at this code below:
 
