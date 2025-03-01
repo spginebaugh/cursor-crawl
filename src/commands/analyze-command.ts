@@ -30,16 +30,23 @@ export const registerAnalyzeCommand = (context: vscode.ExtensionContext): void =
             return; // User canceled
         }
         
+        // First, build the symbol index only
         await ProgressService.runWithProgress(
-            'Analyzing Project',
+            'Building Symbol Index',
             async (progress) => {
                 await ensureProjectAnalysis(rootPath, {
-                    generateDocstrings: generateDocstrings.label === 'Yes',
-                    showMessages: true,
+                    generateDocstrings: false, // Never generate docstrings here
+                    showMessages: generateDocstrings.label === 'No', // Only show messages if not generating docstrings later
                     progress
                 });
             }
         );
+        
+        // If user wants docstrings, trigger the regular docstring generation command
+        if (generateDocstrings.label === 'Yes') {
+            // Execute the dedicated Generate Docstring command (which has a cancel button)
+            await vscode.commands.executeCommand('cursorcrawl.generateDocstringIndex');
+        }
     });
 
     context.subscriptions.push(command);
