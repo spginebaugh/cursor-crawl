@@ -19,6 +19,8 @@
     "onCommand:cursorcrawl.generateCodebaseContext",
     "onCommand:cursorcrawl.analyzeDuplicateLogic",
     "onCommand:cursorcrawl.showDependencyGraph",
+    "onCommand:cursorcrawl.showDependencyGraphWithDuplicates",
+    "onCommand:cursorcrawl.mergeJsonForVisualization",
     "onStartupFinished",
     "workspaceContains:**/*"
   ],
@@ -60,6 +62,14 @@
       {
         "command": "cursorcrawl.showDependencyGraph",
         "title": "Show Dependency Graph Visualization"
+      },
+      {
+        "command": "cursorcrawl.showDependencyGraphWithDuplicates",
+        "title": "Show Dependency Graph with Duplicate Analysis"
+      },
+      {
+        "command": "cursorcrawl.mergeJsonForVisualization",
+        "title": "Merge JSON for Visualization"
       }
     ],
     "configuration": {

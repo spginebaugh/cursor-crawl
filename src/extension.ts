@@ -11,7 +11,8 @@ import {
 	registerResumeDocstringGenerationCommand,
 	registerGenerateCodebaseContextCommand,
 	registerAnalyzeDuplicateLogicCommand,
-	registerShowDependencyGraphCommand
+	registerShowDependencyGraphCommand,
+	registerMergeJsonForVisualizationCommand
 } from '@/commands';
 
 // Import file watcher
@@ -32,6 +33,7 @@ export function activate(context: vscode.ExtensionContext) {
 	registerGenerateCodebaseContextCommand(context);
 	registerAnalyzeDuplicateLogicCommand(context);
 	registerShowDependencyGraphCommand(context);
+	registerMergeJsonForVisualizationCommand(context);
 	
 	// Initialize file watcher
 	setupFileWatcher(context);

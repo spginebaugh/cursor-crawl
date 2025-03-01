@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { SymbolIndex, SymbolIndexEntry } from '@/shared/types/symbol-index';
 import { SymbolIndexService } from '@/shared/services/symbol-index-service';
+import { SymbolIndexWithScores } from '@/shared/types/symbol-index-with-scores';
 
 /**
  * Interface for graph node data
@@ -12,6 +13,7 @@ export interface GraphNode {
   label: string;
   type: string;
   filePath: string;
+  duplicateScore?: number;
 }
 
 /**
@@ -29,6 +31,14 @@ export interface GraphEdge {
 export interface GraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  hasDuplicateAnalysis: boolean;
+}
+
+/**
+ * Interface for duplicate analysis data
+ */
+export interface DuplicateAnalysisData {
+  [filePath: string]: number;
 }
 
 /**
@@ -38,13 +48,15 @@ export const DependencyGraphService = {
   /**
    * Creates graph data from symbol index
    * @param symbolIndex - The symbol index to process
+   * @param duplicateAnalysisData - Optional duplicate analysis data
    * @returns Graph data for visualization
    */
-  createGraphData(symbolIndex: SymbolIndex): GraphData {
+  createGraphData(symbolIndex: SymbolIndex, duplicateAnalysisData?: DuplicateAnalysisData): GraphData {
     const nodes: GraphNode[] = [];
     const edges: GraphEdge[] = [];
     const nodeIds = new Set<string>();
     const edgeMap = new Map<string, boolean>();
+    const hasDuplicateAnalysis = !!duplicateAnalysisData && Object.keys(duplicateAnalysisData).length > 0;
     
     // Process all symbols in the index
     Object.values(symbolIndex).forEach(fileSymbols => {
@@ -55,12 +67,20 @@ export const DependencyGraphService = {
         // Add node if it doesn't already exist
         if (!nodeIds.has(nodeId)) {
           nodeIds.add(nodeId);
-          nodes.push({
+          
+          const node: GraphNode = {
             id: nodeId,
             label: symbol.name,
             type: symbol.type,
             filePath: symbol.filePath
-          });
+          };
+          
+          // Add duplicate score if available
+          if (hasDuplicateAnalysis && duplicateAnalysisData?.[symbol.filePath]) {
+            node.duplicateScore = duplicateAnalysisData[symbol.filePath];
+          }
+          
+          nodes.push(node);
         }
         
         // Process dependencies
@@ -95,7 +115,126 @@ export const DependencyGraphService = {
       });
     });
     
-    return { nodes, edges };
+    return { nodes, edges, hasDuplicateAnalysis };
+  },
+  
+  /**
+   * Reads duplicate analysis data from file if it exists
+   * @param rootPath - The workspace root path
+   * @returns Duplicate analysis data or undefined if not found
+   */
+  async readDuplicateAnalysisData(rootPath: string): Promise<DuplicateAnalysisData | undefined> {
+    try {
+      const analysisPath = path.join(rootPath, '.cursortest', 'duplicate-analysis.json');
+      
+      if (await fs.pathExists(analysisPath)) {
+        const content = await fs.readFile(analysisPath, 'utf8');
+        return JSON.parse(content) as DuplicateAnalysisData;
+      }
+      
+      return undefined;
+    } catch (error) {
+      console.error('Error reading duplicate analysis data:', error);
+      return undefined;
+    }
+  },
+
+  /**
+   * Reads the merged JSON file if it exists
+   * @param rootPath - The workspace root path
+   * @returns The merged symbol index with scores or undefined if not found
+   */
+  async readMergedJsonData(rootPath: string): Promise<SymbolIndexWithScores | undefined> {
+    try {
+      const mergedJsonPath = path.join(rootPath, '.cursortest', 'merged-json-for-viz.json');
+      
+      if (await fs.pathExists(mergedJsonPath)) {
+        console.log(`Found merged JSON at ${mergedJsonPath}`);
+        const content = await fs.readFile(mergedJsonPath, 'utf8');
+        return JSON.parse(content) as SymbolIndexWithScores;
+      }
+      
+      console.log('Merged JSON file not found');
+      return undefined;
+    } catch (error) {
+      console.error('Error reading merged JSON data:', error);
+      return undefined;
+    }
+  },
+
+  /**
+   * Creates graph data from merged symbol index with scores
+   * @param mergedJson - The merged symbol index with scores
+   * @returns Graph data for visualization
+   */
+  createGraphDataFromMergedJson(mergedJson: SymbolIndexWithScores): GraphData {
+    const nodes: GraphNode[] = [];
+    const edges: GraphEdge[] = [];
+    const nodeIds = new Set<string>();
+    const edgeMap = new Map<string, boolean>();
+    const hasDuplicateAnalysis = Object.values(mergedJson).some(fileSymbols => 
+      fileSymbols.some(symbol => symbol.scores?.some(score => score.type === 'duplicateAnalysis'))
+    );
+    
+    // Process all symbols in the merged index
+    Object.values(mergedJson).forEach(fileSymbols => {
+      fileSymbols.forEach(symbol => {
+        // Create a unique ID for the symbol
+        const nodeId = `${symbol.filePath}:${symbol.name}`;
+        
+        // Add node if it doesn't already exist
+        if (!nodeIds.has(nodeId)) {
+          nodeIds.add(nodeId);
+          
+          const node: GraphNode = {
+            id: nodeId,
+            label: symbol.name,
+            type: symbol.type,
+            filePath: symbol.filePath
+          };
+          
+          // Add duplicate score if available
+          const duplicateScore = symbol.scores?.find(score => score.type === 'duplicateAnalysis');
+          if (duplicateScore) {
+            node.duplicateScore = duplicateScore.score;
+          }
+          
+          nodes.push(node);
+        }
+        
+        // Process dependencies
+        symbol.depends_on.forEach(dep => {
+          const targetId = `${dep.filePath}:${dep.name}`;
+          const edgeId = `${nodeId}->${targetId}`;
+          
+          if (!edgeMap.has(edgeId)) {
+            edgeMap.set(edgeId, true);
+            edges.push({
+              source: nodeId,
+              target: targetId,
+              type: 'dependency'
+            });
+          }
+        });
+        
+        // Process dependents
+        symbol.dependents.forEach(dep => {
+          const sourceId = `${dep.filePath}:${dep.name}`;
+          const edgeId = `${sourceId}->${nodeId}`;
+          
+          if (!edgeMap.has(edgeId)) {
+            edgeMap.set(edgeId, true);
+            edges.push({
+              source: sourceId,
+              target: nodeId,
+              type: 'dependent'
+            });
+          }
+        });
+      });
+    });
+    
+    return { nodes, edges, hasDuplicateAnalysis };
   },
   
   /**
@@ -104,6 +243,18 @@ export const DependencyGraphService = {
    * @returns HTML content as string
    */
   createVisualizationHtml(graphData: GraphData): string {
+    // Build the view toggle buttons HTML - only include duplicate view button if we have duplicate analysis data
+    const viewToggleButtonsHtml = graphData.hasDuplicateAnalysis 
+      ? `
+    <span>View: </span>
+    <button id="dependency-view" class="active">Dependency</button>
+    <button id="duplicate-view">Duplicate</button>
+    `
+      : `
+    <span>View: </span>
+    <button id="dependency-view" class="active">Dependency</button>
+    `;
+
     return `
 <!DOCTYPE html>
 <html lang="en">
@@ -138,6 +289,31 @@ export const DependencyGraphService = {
       border-radius: 4px;
       box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
     }
+
+    .view-toggle {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 1000;
+      background-color: rgba(255, 255, 255, 0.9);
+      padding: 10px;
+      border-radius: 4px;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+    }
+
+    .view-toggle button {
+      padding: 5px 10px;
+      border: 1px solid #ccc;
+      background: #fff;
+      cursor: pointer;
+      margin-left: 5px;
+    }
+
+    .view-toggle button.active {
+      background: #4285F4;
+      color: white;
+      border-color: #2b5fb4;
+    }
     
     .node {
       cursor: pointer;
@@ -162,6 +338,35 @@ export const DependencyGraphService = {
       pointer-events: none;
       display: none;
     }
+
+    .legend {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      background-color: rgba(255, 255, 255, 0.9);
+      padding: 10px;
+      border-radius: 4px;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+      display: none;
+      z-index: 1000;
+    }
+
+    .legend.show {
+      display: block;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      margin-bottom: 5px;
+    }
+
+    .legend-color {
+      width: 20px;
+      height: 20px;
+      margin-right: 10px;
+      border: 1px solid #ccc;
+    }
   </style>
 </head>
 <body>
@@ -171,8 +376,37 @@ export const DependencyGraphService = {
     <button id="reset">Reset</button>
     <input type="text" id="search" placeholder="Search nodes...">
   </div>
+
+  <div class="view-toggle">
+    ${viewToggleButtonsHtml}
+  </div>
+
   <div id="graph-container"></div>
   <div class="tooltip" id="tooltip"></div>
+
+  <div id="duplicate-legend" class="legend">
+    <h3>Duplicate Score</h3>
+    <div class="legend-item">
+      <div class="legend-color" style="background-color: #ffffff;"></div>
+      <span>Score 1 (Low duplication)</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-color" style="background-color: #ffcccc;"></div>
+      <span>Score 2</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-color" style="background-color: #ff9999;"></div>
+      <span>Score 3</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-color" style="background-color: #ff6666;"></div>
+      <span>Score 4</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-color" style="background-color: #cc0000;"></div>
+      <span>Score 5 (High duplication)</span>
+    </div>
+  </div>
   
   <script>
     // Graph data
@@ -181,6 +415,9 @@ export const DependencyGraphService = {
     // Setup
     const width = window.innerWidth;
     const height = window.innerHeight;
+    
+    // Current view mode
+    let currentView = 'dependency';
     
     // Create a color scale based on node type
     const typeColorMap = {
@@ -193,6 +430,17 @@ export const DependencyGraphService = {
       'enum': '#FF6D00',
       'other': '#757575'
     };
+
+    // Create a color scale for duplicate scores
+    const duplicateColorScale = d3.scaleLinear()
+      .domain([1, 5])
+      .range(['#ffffff', '#cc0000'])
+      .clamp(true);
+    
+    // Debug: Log number of nodes with duplicate scores
+    console.log('Nodes with duplicate scores:', graphData.nodes.filter(n => n.duplicateScore !== undefined).length);
+    console.log('Total nodes:', graphData.nodes.length);
+    console.log('Has duplicate analysis:', graphData.hasDuplicateAnalysis);
     
     // Create SVG
     const svg = d3.select('#graph-container')
@@ -243,9 +491,9 @@ export const DependencyGraphService = {
         .on('end', dragended));
     
     // Add circles to nodes
-    node.append('circle')
+    const circles = node.append('circle')
       .attr('r', 8)
-      .attr('fill', d => typeColorMap[d.type] || typeColorMap.other)
+      .attr('fill', d => getNodeColor(d, currentView))
       .on('mouseover', showTooltip)
       .on('mouseout', hideTooltip);
     
@@ -254,16 +502,34 @@ export const DependencyGraphService = {
       .attr('dx', 12)
       .attr('dy', '.35em')
       .text(d => d.label);
+
+    // Function to get node color based on current view
+    function getNodeColor(d, view) {
+      if (view === 'duplicate' && d.duplicateScore !== undefined) {
+        // Debug score to color mapping
+        const color = duplicateColorScale(d.duplicateScore);
+        console.log('Node:', d.label, 'Score:', d.duplicateScore, 'Color:', color);
+        return color;
+      } else {
+        return typeColorMap[d.type] || typeColorMap.other;
+      }
+    }
     
     // Tooltip functionality
     function showTooltip(event, d) {
       const tooltip = d3.select('#tooltip');
+      let content = \`
+        <strong>Name:</strong> \${d.label}<br>
+        <strong>Type:</strong> \${d.type}<br>
+        <strong>File:</strong> \${d.filePath}
+      \`;
+      
+      if (d.duplicateScore !== undefined) {
+        content += \`<br><strong>Duplicate Score:</strong> \${d.duplicateScore}\`;
+      }
+      
       tooltip.style('display', 'block')
-        .html(\`
-          <strong>Name:</strong> \${d.label}<br>
-          <strong>Type:</strong> \${d.type}<br>
-          <strong>File:</strong> \${d.filePath}
-        \`)
+        .html(content)
         .style('left', (event.pageX + 10) + 'px')
         .style('top', (event.pageY + 10) + 'px');
     }
@@ -314,6 +580,37 @@ export const DependencyGraphService = {
       svg.transition().call(zoom.transform, d3.zoomIdentity);
     });
     
+    // View toggle buttons
+    d3.select('#dependency-view').on('click', function() {
+      if (currentView !== 'dependency') {
+        currentView = 'dependency';
+        updateViewMode();
+      }
+    });
+
+    if (graphData.hasDuplicateAnalysis) {
+      d3.select('#duplicate-view').on('click', function() {
+        if (currentView !== 'duplicate') {
+          currentView = 'duplicate';
+          updateViewMode();
+        }
+      });
+    }
+
+    function updateViewMode() {
+      console.log('Updating view mode to:', currentView);
+      
+      // Update button states
+      d3.select('#dependency-view').classed('active', currentView === 'dependency');
+      d3.select('#duplicate-view').classed('active', currentView === 'duplicate');
+      
+      // Update node colors - force reapplication of colors
+      circles.attr('fill', d => getNodeColor(d, currentView));
+      
+      // Show/hide duplicate legend
+      d3.select('#duplicate-legend').classed('show', currentView === 'duplicate');
+    }
+    
     d3.select('#search').on('input', function() {
       const term = this.value.toLowerCase();
       
@@ -321,7 +618,7 @@ export const DependencyGraphService = {
       node.classed('highlight', false)
         .select('circle')
         .attr('r', 8)
-        .attr('fill', d => typeColorMap[d.type] || typeColorMap.other);
+        .attr('fill', d => getNodeColor(d, currentView));
       
       link.attr('stroke', '#999').attr('stroke-width', 1);
       
@@ -336,7 +633,10 @@ export const DependencyGraphService = {
           .classed('highlight', true)
           .select('circle')
           .attr('r', 12)
-          .attr('fill', d => d3.color(typeColorMap[d.type] || typeColorMap.other).brighter(0.5));
+          .attr('fill', d => {
+            const baseColor = getNodeColor(d, currentView);
+            return d3.color(baseColor).brighter(0.5);
+          });
       }
     });
     
@@ -368,15 +668,36 @@ export const DependencyGraphService = {
    * @returns Promise that resolves when the visualization is saved
    */
   async generateVisualization(rootPath: string): Promise<string> {
-    // Read the symbol index
-    const symbolIndex = await SymbolIndexService.readSymbolIndex(rootPath);
+    let graphData: GraphData;
     
-    if (!symbolIndex) {
-      throw new Error('Symbol index not found. Run "Build Symbol Index" command first.');
+    // First try to read the merged JSON with scores
+    const mergedJson = await this.readMergedJsonData(rootPath);
+    
+    if (mergedJson) {
+      console.log('Using merged JSON with scores for visualization');
+      graphData = this.createGraphDataFromMergedJson(mergedJson);
+    } else {
+      // Fall back to the original approach
+      console.log('Falling back to original symbol index and duplicate analysis');
+      
+      // Read the symbol index
+      const symbolIndex = await SymbolIndexService.readSymbolIndex(rootPath);
+      
+      if (!symbolIndex) {
+        throw new Error('Symbol index not found. Run "Build Symbol Index" command first.');
+      }
+      
+      // Read duplicate analysis data if available
+      const duplicateAnalysisData = await this.readDuplicateAnalysisData(rootPath);
+      
+      // Create graph data
+      graphData = this.createGraphData(symbolIndex, duplicateAnalysisData);
     }
     
-    // Create graph data
-    const graphData = this.createGraphData(symbolIndex);
+    // Add a duplicate view button only if we have duplicate analysis
+    if (graphData.hasDuplicateAnalysis) {
+      console.log('Duplicate analysis data found, adding duplicate view button');
+    }
     
     // Generate HTML content
     const htmlContent = this.createVisualizationHtml(graphData);
