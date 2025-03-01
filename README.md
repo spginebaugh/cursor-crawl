@@ -1,6 +1,8 @@
-# cursorcrawl README
+# CursorCrawl
 
 This is the README for your extension "cursorcrawl". After writing up a brief description, we recommend including the following sections.
+
+## Motivation
 
 ## Features
 

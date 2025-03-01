@@ -6,6 +6,7 @@ import {
 	registerAnalyzeCommand,
 	registerBuildSymbolIndexCommand,
 	registerGenerateDocstringIndexCommand,
+	registerGenerateDocstringIndexParallelCommand,
 	registerExtractContextCommand,
 	registerResumeDocstringGenerationCommand
 } from '@/commands';
@@ -22,6 +23,7 @@ export function activate(context: vscode.ExtensionContext) {
 	registerAnalyzeCommand(context);
 	registerBuildSymbolIndexCommand(context);
 	registerGenerateDocstringIndexCommand(context);
+	registerGenerateDocstringIndexParallelCommand(context);
 	registerExtractContextCommand(context);
 	registerResumeDocstringGenerationCommand(context);
 	

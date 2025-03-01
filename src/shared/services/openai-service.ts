@@ -285,7 +285,7 @@ export const OpenAiService = {
     }>
   ): Promise<DocstringOutput> {
     try {
-      const prompt = `I need JSDoc style docstrings for specific declarations in this TypeScript file. 
+      const prompt = `I need highly detailed and thorough JSDoc style docstrings for specific declarations in this TypeScript file. 
 Here's the complete file content for context:
 
 \`\`\`typescript
@@ -295,7 +295,7 @@ ${fileContent}
 Generate docstrings for the following declarations (identified by name, type, and line number):
 ${JSON.stringify(nodes, null, 2)}
 
-For each declaration, provide a comprehensive docstring that explains what it does, its parameters, return type, and possible errors.
+For each declaration, provide a comprehensive and detailed docstring that explains what it does, its parameters, return type, and possible errors.
 Be concise but complete. Return the docstrings as structured data.`;
 
       // Use the retry-enabled safe completion function

@@ -14,6 +14,7 @@
     "onCommand:cursorcrawl.buildSymbolIndex",
     "onCommand:cursorcrawl.extractContext",
     "onCommand:cursorcrawl.generateDocstringIndex",
+    "onCommand:cursorcrawl.generateDocstringIndexParallel",
     "onCommand:cursorcrawl.resumeDocstringGeneration",
     "onStartupFinished",
     "workspaceContains:**/*"
@@ -38,6 +39,10 @@
         "title": "Generate Docstrings for Symbol Index"
       },
       {
+        "command": "cursorcrawl.generateDocstringIndexParallel",
+        "title": "Generate Docstrings for Symbol Index (Parallel)"
+      },
+      {
         "command": "cursorcrawl.resumeDocstringGeneration",
         "title": "Resume Docstring Generation (Fill Empty Only)"
       }
@@ -49,6 +54,13 @@
           "type": "string",
           "default": "",
           "description": "OpenAI API Key for generating docstrings"
+        },
+        "cursorcrawl.docstringGenerationConcurrency": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 20,
+          "description": "Maximum number of files to process concurrently when generating docstrings in parallel mode"
         }
       }
     }
@@ -87,6 +99,7 @@
     "dotenv": "^16.4.7",
     "fs-extra": "^11.3.0",
     "openai": "^4.86.1",
+    "p-limit": "^6.2.0",
     "typescript": "^5.7.3",
     "zod": "^3.24.2"
   }
