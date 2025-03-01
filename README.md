@@ -53,6 +53,14 @@ As a proof of concept, this extension enables users to create detailed LLM-gener
 
 ## Features Overview
 
+- Builds symbol index 
+- Then uses openai to generate detailed docstrings
+- Uses flattened docstrings json as input to LLM to detect likely repeated constructs
+- Visualization of codebase
+
+![zoom_out_graph](./images/zoom_out_graph.png)
+![zoom_in_graph](./images/zoom_in_graph.png)
+
 ## How to install
 
 CursorCrawl can be installed using one of the following methods:
@@ -72,13 +80,26 @@ CursorCrawl can be installed using one of the following methods:
 5. Package the extension: `npm run package`
 6. Install the generated `.vsix` file using the manual installation method above
 
-## Requirements
-
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
 
 ## Extension Settings
 
 have a .env.local file with OPENAI_API_KEY=your_api_key_here , or enter your OpenAI API key in the VSCode settings under Cursorcrawl: Openai Api Key.
+
+## How to Run
+
+To run, press Ctrl+Shift+P, then enter one of the following commands
+- Analyze Codebase: builds symbol index then optionally generates docstring
+- Build Symbol Index (No Docstrings)
+- Generate Docstrings for Symbol Index
+- Generate Docstrings for Symbol Index (Parallel): warning- blasts openai api-- need to have a high rate limit
+- Resume Docstring Generation (Fill Empty Only)
+- Generate Codebase Context from Symbol Index
+- Analyze Duplicate Logic in Codebase
+- Merge JSON for Visualization
+- Show Dependency Graph Visualization
+
+The main features are found by running the following in this order:
+Build Symbol Index (No Docstrings) --> Generate Docstrings for Symbol Index --> Generate Codebase Context from Symbol Index --> Analyze Duplicate Logic in Codebase --> Merge JSON for Visualization --> Show Dependency Graph Visualization
 
 ## To do:
 - visualizations
@@ -96,4 +117,3 @@ have a .env.local file with OPENAI_API_KEY=your_api_key_here , or enter your Ope
 - Improve handling of updating code
 - code smell detection
 
-**Enjoy!**
