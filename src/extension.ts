@@ -9,7 +9,8 @@ import {
 	registerGenerateDocstringIndexParallelCommand,
 	registerExtractContextCommand,
 	registerResumeDocstringGenerationCommand,
-	registerGenerateCodebaseContextCommand
+	registerGenerateCodebaseContextCommand,
+	registerAnalyzeDuplicateLogicCommand
 } from '@/commands';
 
 // Import file watcher
@@ -28,6 +29,7 @@ export function activate(context: vscode.ExtensionContext) {
 	registerExtractContextCommand(context);
 	registerResumeDocstringGenerationCommand(context);
 	registerGenerateCodebaseContextCommand(context);
+	registerAnalyzeDuplicateLogicCommand(context);
 	
 	// Initialize file watcher
 	setupFileWatcher(context);
