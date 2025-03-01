@@ -37,8 +37,8 @@ export class Statistics {
 ```
 It has 119 tokens with the documentation, but only 35 tokens without. 
 
-![35 tokens](https://raw.githubusercontent.com/gauntletai/cursorcrawl/main/docs/tokens_35.png)
-![119 tokens](https://raw.githubusercontent.com/gauntletai/cursorcrawl/main/docs/tokens_119.png)
+![35 tokens](./images/tokens_35.png)
+![119 tokens](./images/tokens_119.png)
 
 From a human perspective, the documentation makes it easier to understand, but from the LLMs perspective it is 3.4 times more work to read.
 
