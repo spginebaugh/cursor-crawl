@@ -1,0 +1,1 @@
+export { setupFileWatcher } from './file-watcher'; 

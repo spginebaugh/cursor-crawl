@@ -3,31 +3,45 @@
  */
 export interface RelevantInfo {
   /**
-   * The dependency information relevant to the context files
+   * Map of file paths to their content and symbols
    */
-  dependencies: {
-    /**
-     * Map of file paths to their dependency information
-     */
-    files: Record<string, FileDependencyInfo>;
-  };
+  files: Record<string, FileContentInfo>;
   
   /**
-   * The symbol information relevant to the context files
+   * The dependency graph information for all context files
    */
-  symbols: {
-    /**
-     * Map of symbol identifiers to their detailed information
-     */
-    symbols: Record<string, SymbolInfo>;
-  };
-  
-  /**
-   * The context files that were referenced in the prompt
-   */
-  contextFiles: string[];
+  dependencyGraph: Record<string, FileImportInfo>;
 }
 
-// Import types from the new consolidated type files
-import { FileDependencyInfo } from './dependency-map';
-import { SymbolIndexEntry as SymbolInfo } from './symbol-index'; 
+// Import types from symbol-index.ts
+import { SymbolIndexEntry } from './symbol-index';
+
+/**
+ * Contains file import and export relationship information
+ */
+export interface FileImportInfo {
+  /**
+   * Files that this file imports from (forward dependencies)
+   */
+  imports: { from: string; imports: string[] }[];
+  
+  /**
+   * Files that import this file (reverse dependencies)
+   */
+  importedBy: { from: string; imports: string[] }[];
+}
+
+/**
+ * Contains file content and symbol information
+ */
+export interface FileContentInfo {
+  /**
+   * The content of the file with context
+   */
+  content: string;
+  
+  /**
+   * The symbols defined in the file
+   */
+  symbols: SymbolIndexEntry[];
+} 

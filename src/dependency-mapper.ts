@@ -1,23 +1,23 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import * as ts from 'typescript';
-import { DependencyMap, FileDependencyInfo, ImportInfo } from '@/shared/types/dependency-map';
+import { SymbolIndex, DependencyInfo, DependentInfo } from '@/shared/types/symbol-index';
 import { 
   ANALYZABLE_EXTENSIONS, 
   ALWAYS_IGNORED_DIRS, 
   MAX_FILES_TO_PROCESS,
   FileSystemService
 } from './shared/services/file-system-service';
-import { TsAnalyzerService } from './shared/services/ts-analyzer-service';
 import { WorkspaceService } from './shared/services/workspace-service';
 
 /**
- * Creates a complete dependency map for a project
+ * Creates dependency information for a project and incorporates it into a symbol index
  */
-export const createDependencyMap = async (
+export const buildDependencyGraph = async (
   rootPath: string,
+  symbolIndex: SymbolIndex = {},
   ignoredPatterns: string[] = []
-): Promise<DependencyMap> => {
+): Promise<SymbolIndex> => {
   try {
     // Get all project files
     const projectFiles = await FileSystemService.getProjectFiles(rootPath, ignoredPatterns);
@@ -28,8 +28,20 @@ export const createDependencyMap = async (
       projectFiles.length = MAX_FILES_TO_PROCESS;
     }
     
-    // Initialize the dependency map
-    const dependencyMap: DependencyMap = { files: {} };
+    // Initialize the symbol index with empty arrays for files that don't have entries yet
+    for (const filePath of projectFiles) {
+      const normalizedPath = FileSystemService.normalizeFilePath(filePath, rootPath);
+      
+      // Skip if not a file we should analyze
+      if (!FileSystemService.isAnalyzableFile(normalizedPath)) {
+        continue;
+      }
+      
+      // Initialize entry in symbol index if it doesn't exist
+      if (!symbolIndex[normalizedPath]) {
+        symbolIndex[normalizedPath] = [];
+      }
+    }
     
     // Process each file to build the dependency graph
     for (const filePath of projectFiles) {
@@ -40,166 +52,216 @@ export const createDependencyMap = async (
         continue;
       }
       
-      // Initialize entry in dependency map if it doesn't exist
-      if (!dependencyMap.files[normalizedPath]) {
-        dependencyMap.files[normalizedPath] = {
-          imports: [],
-          importedBy: []
-        };
-      }
-      
       // Parse the file to extract imports
       const imports = await parseFileImports(path.join(rootPath, normalizedPath), rootPath);
       
-      // Add import information to the file entry
-      dependencyMap.files[normalizedPath].imports = imports;
-      
-      // Build the reverse dependencies (importedBy)
+      // Add import information to the file's symbols
       for (const importInfo of imports) {
         const importedFile = importInfo.from;
+        const importedSymbols = importInfo.imports;
         
-        // Initialize entry for imported file if it doesn't exist
-        if (!dependencyMap.files[importedFile]) {
-          dependencyMap.files[importedFile] = {
-            imports: [],
-            importedBy: []
-          };
+        // Find symbols in the current file
+        const fileSymbols = symbolIndex[normalizedPath] || [];
+        
+        // Find symbols in the imported file
+        const importedFileSymbols = symbolIndex[importedFile] || [];
+        
+        // Link the dependencies
+        for (const symbol of fileSymbols) {
+          // For each imported symbol, create a dependency relationship
+          for (const importedSymbolName of importedSymbols) {
+            // Skip default and wildcard imports as they're harder to track
+            if (importedSymbolName === 'default' || importedSymbolName === '*') {
+              continue;
+            }
+            
+            // Find the matching symbol in the imported file
+            const importedSymbol = importedFileSymbols.find(s => s.name === importedSymbolName);
+            
+            if (importedSymbol) {
+              // Create a dependency from current symbol to imported symbol
+              const dependency: DependencyInfo = {
+                name: importedSymbol.name,
+                filePath: importedFile,
+                line: importedSymbol.location.line
+              };
+              
+              // Add to depends_on if not already there
+              if (!symbol.depends_on.some(d => d.name === dependency.name && d.filePath === dependency.filePath)) {
+                symbol.depends_on.push(dependency);
+              }
+              
+              // Create a dependent from imported symbol to current symbol
+              const dependent: DependentInfo = {
+                name: symbol.name,
+                filePath: normalizedPath,
+                line: symbol.location.line
+              };
+              
+              // Add to dependents if not already there
+              if (!importedSymbol.dependents.some(d => d.name === dependent.name && d.filePath === dependent.filePath)) {
+                importedSymbol.dependents.push(dependent);
+              }
+            }
+          }
         }
-        
-        // Add this file to the importedBy list of the imported file
-        dependencyMap.files[importedFile].importedBy.push({
-          from: normalizedPath,
-          imports: importInfo.imports
-        });
       }
     }
     
-    // Write the dependency map to file
-    await WorkspaceService.writeCursorTestFile(rootPath, 'dependency-map.json', dependencyMap);
+    // Write the dependency-enhanced symbol index to file
+    await WorkspaceService.writeCursorTestFile(rootPath, 'symbol-index.json', symbolIndex);
     
-    return dependencyMap;
+    return symbolIndex;
   } catch (error) {
-    console.error('Error creating dependency map:', error);
+    console.error('Error building dependency graph:', error);
     throw error;
   }
 };
 
 /**
- * Updates an existing dependency map based on a changed file
+ * Updates the dependency information in an existing symbol index based on a changed file
  */
-export const updateDependencyMap = async (
+export const updateDependencyGraph = async (
   rootPath: string,
-  existingMap: DependencyMap,
+  existingIndex: SymbolIndex,
   changedFilePath: string,
   ignoredPatterns: string[] = []
-): Promise<DependencyMap> => {
+): Promise<SymbolIndex> => {
   try {
-    // Create a deep copy of the existing map to avoid modifying the original
-    const updatedMap: DependencyMap = JSON.parse(JSON.stringify(existingMap));
+    // Create a deep copy of the existing index to avoid modifying the original
+    const updatedIndex: SymbolIndex = JSON.parse(JSON.stringify(existingIndex));
     
     // Normalize the changed file path
     const normalizedChangedPath = FileSystemService.normalizeFilePath(changedFilePath, rootPath);
     
     // Skip if not a file we should analyze
     if (!FileSystemService.isAnalyzableFile(normalizedChangedPath)) {
-      return updatedMap;
+      return updatedIndex;
     }
     
     // If the file was deleted
     if (!await fs.pathExists(changedFilePath)) {
-      // Remove all references to this file from other files' importedBy lists
-      if (updatedMap.files[normalizedChangedPath]) {
-        for (const importInfo of updatedMap.files[normalizedChangedPath].imports) {
-          const importedFile = importInfo.from;
-          if (updatedMap.files[importedFile]) {
-            updatedMap.files[importedFile].importedBy = updatedMap.files[importedFile].importedBy.filter(
-              info => info.from !== normalizedChangedPath
-            );
+      // Clear dependencies and dependents for the deleted file
+      if (updatedIndex[normalizedChangedPath]) {
+        // For each symbol in the deleted file
+        for (const symbol of updatedIndex[normalizedChangedPath]) {
+          // Remove this symbol from the dependents list of any symbols it depends on
+          for (const dependency of symbol.depends_on) {
+            const dependencyFile = dependency.filePath;
+            const dependencySymbol = dependency.name;
+            
+            if (updatedIndex[dependencyFile]) {
+              // Find the symbol and remove this symbol from its dependents
+              const depSymbol = updatedIndex[dependencyFile].find(s => s.name === dependencySymbol);
+              if (depSymbol) {
+                depSymbol.dependents = depSymbol.dependents.filter(
+                  d => d.filePath !== normalizedChangedPath
+                );
+              }
+            }
           }
         }
         
-        // Remove the file from the dependency map
-        delete updatedMap.files[normalizedChangedPath];
+        // Remove the file from the symbol index
+        delete updatedIndex[normalizedChangedPath];
       }
       
-      return updatedMap;
+      return updatedIndex;
     }
-    
-    // Store the old import list to compare with new one
-    const oldImports = updatedMap.files[normalizedChangedPath]?.imports || [];
     
     // Reanalyze the changed file
     const newImports = await parseFileImports(changedFilePath, rootPath);
     
-    // Initialize or update the file entry
-    updatedMap.files[normalizedChangedPath] = updatedMap.files[normalizedChangedPath] || { 
-      imports: [], 
-      importedBy: [] 
-    };
-    updatedMap.files[normalizedChangedPath].imports = newImports;
-    
-    // Find removed imports - need to remove this file from those files' importedBy lists
-    for (const oldImport of oldImports) {
-      const stillImported = newImports.some(newImport => 
-        newImport.from === oldImport.from && 
-        TsAnalyzerService.arraysHaveSameItems(newImport.imports, oldImport.imports)
-      );
-      
-      if (!stillImported && updatedMap.files[oldImport.from]) {
-        // Remove this file from the importedBy list of the previously imported file
-        updatedMap.files[oldImport.from].importedBy = updatedMap.files[oldImport.from].importedBy.filter(
-          info => info.from !== normalizedChangedPath
-        );
-      }
-    }
-    
-    // Find new imports - need to add this file to those files' importedBy lists
-    for (const newImport of newImports) {
-      const wasAlreadyImported = oldImports.some(oldImport => 
-        oldImport.from === newImport.from && 
-        TsAnalyzerService.arraysHaveSameItems(oldImport.imports, newImport.imports)
-      );
-      
-      if (!wasAlreadyImported) {
-        // Initialize entry for imported file if it doesn't exist
-        if (!updatedMap.files[newImport.from]) {
-          updatedMap.files[newImport.from] = {
-            imports: [],
-            importedBy: []
-          };
-        }
-        
-        // Add this file to the importedBy list of the newly imported file
-        // Avoid duplicates
-        const alreadyInImportedBy = updatedMap.files[newImport.from].importedBy.some(
-          info => info.from === normalizedChangedPath
-        );
-        
-        if (!alreadyInImportedBy) {
-          updatedMap.files[newImport.from].importedBy.push({
-            from: normalizedChangedPath,
-            imports: newImport.imports
-          });
-        } else {
-          // Update the existing importedBy entry
-          updatedMap.files[newImport.from].importedBy = updatedMap.files[newImport.from].importedBy.map(info => {
-            if (info.from === normalizedChangedPath) {
-              return {
-                from: normalizedChangedPath,
-                imports: newImport.imports
-              };
+    // Clear existing dependencies for this file's symbols
+    if (updatedIndex[normalizedChangedPath]) {
+      // For each symbol in the file
+      for (const symbol of updatedIndex[normalizedChangedPath]) {
+        // Remove this symbol from dependents lists of other symbols
+        for (const dependency of symbol.depends_on) {
+          const dependencyFile = dependency.filePath;
+          const dependencySymbol = dependency.name;
+          
+          if (updatedIndex[dependencyFile]) {
+            // Find the symbol and remove this symbol from its dependents
+            const depSymbol = updatedIndex[dependencyFile].find(s => s.name === dependencySymbol);
+            if (depSymbol) {
+              depSymbol.dependents = depSymbol.dependents.filter(
+                d => !(d.filePath === normalizedChangedPath && d.name === symbol.name)
+              );
             }
-            return info;
-          });
+          }
+        }
+        
+        // Clear this symbol's dependencies
+        symbol.depends_on = [];
+      }
+    } else {
+      // If the file wasn't in the index before, initialize it
+      updatedIndex[normalizedChangedPath] = [];
+    }
+    
+    // Add new dependencies based on the new imports
+    for (const importInfo of newImports) {
+      const importedFile = importInfo.from;
+      const importedSymbols = importInfo.imports;
+      
+      // Skip if the imported file doesn't exist in the index
+      if (!updatedIndex[importedFile]) {
+        continue;
+      }
+      
+      // Find symbols in the current file
+      const fileSymbols = updatedIndex[normalizedChangedPath] || [];
+      
+      // Find symbols in the imported file
+      const importedFileSymbols = updatedIndex[importedFile] || [];
+      
+      // Link the dependencies
+      for (const symbol of fileSymbols) {
+        // For each imported symbol, create a dependency relationship
+        for (const importedSymbolName of importedSymbols) {
+          // Skip default and wildcard imports as they're harder to track
+          if (importedSymbolName === 'default' || importedSymbolName === '*') {
+            continue;
+          }
+          
+          // Find the matching symbol in the imported file
+          const importedSymbol = importedFileSymbols.find(s => s.name === importedSymbolName);
+          
+          if (importedSymbol) {
+            // Create a dependency from current symbol to imported symbol
+            const dependency: DependencyInfo = {
+              name: importedSymbol.name,
+              filePath: importedFile,
+              line: importedSymbol.location.line
+            };
+            
+            // Add to depends_on if not already there
+            if (!symbol.depends_on.some(d => d.name === dependency.name && d.filePath === dependency.filePath)) {
+              symbol.depends_on.push(dependency);
+            }
+            
+            // Create a dependent from imported symbol to current symbol
+            const dependent: DependentInfo = {
+              name: symbol.name,
+              filePath: normalizedChangedPath,
+              line: symbol.location.line
+            };
+            
+            // Add to dependents if not already there
+            if (!importedSymbol.dependents.some(d => d.name === dependent.name && d.filePath === dependent.filePath)) {
+              importedSymbol.dependents.push(dependent);
+            }
+          }
         }
       }
     }
     
-    return updatedMap;
+    return updatedIndex;
   } catch (error) {
-    console.error('Error updating dependency map:', error);
-    // If anything goes wrong during the update, return the original map unchanged
-    return existingMap;
+    console.error('Error updating dependency graph:', error);
+    // If anything goes wrong during the update, return the original index unchanged
+    return existingIndex;
   }
 };
 
@@ -209,7 +271,7 @@ export const updateDependencyMap = async (
 const parseFileImports = async (
   filePath: string,
   rootPath: string
-): Promise<ImportInfo[]> => {
+): Promise<Array<{ from: string; imports: string[] }>> => {
   try {
     // Skip non-analyzable files
     if (!FileSystemService.isAnalyzableFile(filePath)) {
@@ -243,7 +305,7 @@ const parseFileImports = async (
       true
     );
     
-    const imports: ImportInfo[] = [];
+    const imports: Array<{ from: string; imports: string[] }> = [];
     const processedImports = new Set<string>();
     
     // Recursive function to visit nodes in the AST
