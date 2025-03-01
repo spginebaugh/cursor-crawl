@@ -35,7 +35,12 @@ export class Statistics {
   }
 }
 ```
-It has 119 tokens with the documentation, but only 35 tokens without. From a human perspective, the documentation makes it easier to understand, but from the LLMs perspective it is 3.4 times more work to read.
+It has 119 tokens with the documentation, but only 35 tokens without. 
+
+![35 tokens](https://raw.githubusercontent.com/gauntletai/cursorcrawl/main/docs/tokens_35.png)
+![119 tokens](https://raw.githubusercontent.com/gauntletai/cursorcrawl/main/docs/tokens_119.png)
+
+From a human perspective, the documentation makes it easier to understand, but from the LLMs perspective it is 3.4 times more work to read.
 
 On the other hand, tools like Cursor are still in their infancy, and are very prone to making mistakes that can be extremely frustrating to fix. The main one I am focusing on here is code duplication.
 
