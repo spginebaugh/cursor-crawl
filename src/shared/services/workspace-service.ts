@@ -3,7 +3,7 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 
 // Constants
-const CURSOR_TEST_DIR = '.cursortest';
+const CURSOR_TEST_DIR = '.cursorcrawl';
 
 /**
  * Service for handling workspace-related operations
@@ -35,39 +35,39 @@ export const WorkspaceService = {
   },
 
   /**
-   * Ensures the .cursortest directory exists in the workspace
+   * Ensures the .cursorcrawl directory exists in the workspace
    * @param rootPath - The workspace root path
-   * @returns The path to the .cursortest directory
+   * @returns The path to the .cursorcrawl directory
    */
-  async ensureCursorTestDir(rootPath: string): Promise<string> {
-    const cursorTestDir = path.join(rootPath, CURSOR_TEST_DIR);
-    await fs.ensureDir(cursorTestDir);
-    return cursorTestDir;
+  async ensureCursorCrawlDir(rootPath: string): Promise<string> {
+    const cursorCrawlDir = path.join(rootPath, CURSOR_TEST_DIR);
+    await fs.ensureDir(cursorCrawlDir);
+    return cursorCrawlDir;
   },
 
   /**
-   * Gets the path to the .cursortest directory
+   * Gets the path to the .cursorcrawl directory
    * @param rootPath - The workspace root path
-   * @returns The path to the .cursortest directory
+   * @returns The path to the .cursorcrawl directory
    */
-  getCursorTestDir(rootPath: string): string {
+  getCursorCrawlDir(rootPath: string): string {
     return path.join(rootPath, CURSOR_TEST_DIR);
   },
 
   /**
-   * Writes data to a file in the .cursortest directory
+   * Writes data to a file in the .cursorcrawl directory
    * @param rootPath - The workspace root path
    * @param filename - The name of the file to write
    * @param data - The data to write
    * @returns The path to the written file
    */
-  async writeCursorTestFile(
+  async writeCursorCrawlFile(
     rootPath: string,
     filename: string,
     data: any
   ): Promise<string> {
-    const cursorTestDir = await this.ensureCursorTestDir(rootPath);
-    const filePath = path.join(cursorTestDir, filename);
+    const cursorCrawlDir = await this.ensureCursorCrawlDir(rootPath);
+    const filePath = path.join(cursorCrawlDir, filename);
     
     if (typeof data === 'string') {
       await fs.writeFile(filePath, data, 'utf8');
@@ -79,13 +79,13 @@ export const WorkspaceService = {
   },
 
   /**
-   * Reads data from a file in the .cursortest directory
+   * Reads data from a file in the .cursorcrawl directory
    * @param rootPath - The workspace root path
    * @param filename - The name of the file to read
    * @param isJson - Whether the file contains JSON data
    * @returns The file data
    */
-  async readCursorTestFile<T>(
+  async readCursorCrawlFile<T>(
     rootPath: string,
     filename: string,
     isJson: boolean = true
@@ -104,12 +104,12 @@ export const WorkspaceService = {
   },
 
   /**
-   * Checks if a file exists in the .cursortest directory
+   * Checks if a file exists in the .cursorcrawl directory
    * @param rootPath - The workspace root path
    * @param filename - The name of the file to check
    * @returns Whether the file exists
    */
-  async cursorTestFileExists(
+  async cursorCrawlFileExists(
     rootPath: string,
     filename: string
   ): Promise<boolean> {

@@ -125,7 +125,7 @@ export const DependencyGraphService = {
    */
   async readDuplicateAnalysisData(rootPath: string): Promise<DuplicateAnalysisData | undefined> {
     try {
-      const analysisPath = path.join(rootPath, '.cursortest', 'duplicate-analysis.json');
+      const analysisPath = path.join(rootPath, '.cursorcrawl', 'duplicate-analysis.json');
       
       if (await fs.pathExists(analysisPath)) {
         const content = await fs.readFile(analysisPath, 'utf8');
@@ -146,7 +146,7 @@ export const DependencyGraphService = {
    */
   async readMergedJsonData(rootPath: string): Promise<SymbolIndexWithScores | undefined> {
     try {
-      const mergedJsonPath = path.join(rootPath, '.cursortest', 'merged-json-for-viz.json');
+      const mergedJsonPath = path.join(rootPath, '.cursorcrawl', 'merged-json-for-viz.json');
       
       if (await fs.pathExists(mergedJsonPath)) {
         console.log(`Found merged JSON at ${mergedJsonPath}`);
@@ -658,7 +658,7 @@ export const DependencyGraphService = {
    * @returns The path for the visualization HTML
    */
   getVisualizationPath(rootPath: string): string {
-    const dirPath = path.join(rootPath, '.cursortest');
+    const dirPath = path.join(rootPath, '.cursorcrawl');
     return path.join(dirPath, 'dependency-graph.html');
   },
 

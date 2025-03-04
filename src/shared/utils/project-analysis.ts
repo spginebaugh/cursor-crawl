@@ -21,13 +21,13 @@ export interface ProjectAnalysisOptions {
 }
 
 /**
- * Ensures the .cursortest directory exists and setup is complete
+ * Ensures the .cursorcrawl directory exists and setup is complete
  * @param rootPath - The workspace root path
  * @returns Whether the operation was successful
  */
 export async function ensureProjectSetup(rootPath: string): Promise<boolean> {
     try {
-        await WorkspaceService.ensureCursorTestDir(rootPath);
+        await WorkspaceService.ensureCursorCrawlDir(rootPath);
         return true;
     } catch (error) {
         console.error('Error setting up project directory:', error);
@@ -59,7 +59,7 @@ export async function generateProjectTreeFile(
     try {
         progress?.report({ message: 'Generating project tree...' });
         const treeContent = await ProjectService.generateProjectTree(rootPath, ignoredPatterns);
-        await WorkspaceService.writeCursorTestFile(rootPath, 'project-tree.mdc', `# Project Tree\n\n\`\`\`\n${treeContent}\`\`\`\n`);
+        await WorkspaceService.writeCursorCrawlFile(rootPath, 'project-tree.mdc', `# Project Tree\n\n\`\`\`\n${treeContent}\`\`\`\n`);
         return true;
     } catch (error) {
         console.error('Error generating project tree:', error);

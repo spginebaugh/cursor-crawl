@@ -1,0 +1,87 @@
+# Project Tree
+
+```
+├── .cursortest
+│   └── test-function-docstrings.json
+├── .gitignore
+├── .vscode-test.mjs
+├── .vscode
+│   ├── extensions.json
+│   ├── launch.json
+│   ├── settings.json
+│   └── tasks.json
+├── .vscodeignore
+├── CHANGELOG.md
+├── README.md
+├── cursorcrawl-0.0.1.vsix
+├── esbuild.js
+├── eslint.config.mjs
+├── images
+│   ├── tokens_119.png
+│   ├── tokens_35.png
+│   ├── zoom_in_graph.png
+│   └── zoom_out_graph.png
+├── package-lock.json
+├── package.json
+├── src
+│   ├── commands
+│   │   ├── analyze-command.ts
+│   │   ├── analyze-duplicate-logic-command.ts
+│   │   ├── build-symbol-index-command.ts
+│   │   ├── extract-context-command.ts
+│   │   ├── generate-codebase-context-command.ts
+│   │   ├── generate-docstring-index-command.ts
+│   │   ├── generate-docstring-index-parallel-command.ts
+│   │   ├── index.ts
+│   │   ├── merge-json-for-visualization-command.ts
+│   │   ├── resume-docstring-generation-command.ts
+│   │   └── show-dependency-graph-command.ts
+│   ├── context-extractor.ts
+│   ├── extension.ts
+│   ├── features
+│   │   ├── context-extractor
+│   │   │   ├── context-file-service.ts
+│   │   │   ├── relevant-info-service.ts
+│   │   │   └── symbol-index-analyzer.ts
+│   │   ├── dependency-graph
+│   │   │   ├── dependency-graph-command.ts
+│   │   │   └── dependency-graph-service.ts
+│   │   ├── docstring-analyzer
+│   │   │   ├── codebase-context-generator.ts
+│   │   │   └── duplicate-logic-analyzer.ts
+│   │   ├── file-watcher
+│   │   │   ├── file-watcher.ts
+│   │   │   └── index.ts
+│   │   ├── generate-docstring
+│   │   │   ├── docstring-generation-service.ts
+│   │   │   ├── file-io-service.ts
+│   │   │   ├── generate-docstring-parallel.ts
+│   │   │   └── generate-docstring.ts
+│   │   ├── merge-json
+│   │   │   ├── merge-json-command.ts
+│   │   │   └── merge-json-service.ts
+│   │   └── symbol-index
+│   │       ├── dependency-resolver-service.ts
+│   │       ├── symbol-extraction-service.ts
+│   │       ├── symbol-index-orchestrator.ts
+│   │       └── symbol-index.ts
+│   ├── shared
+│   │   ├── services
+│   │   │   ├── file-system-service.ts
+│   │   │   ├── openai-service.ts
+│   │   │   ├── progress-service.ts
+│   │   │   ├── project-service.ts
+│   │   │   ├── symbol-index-service.ts
+│   │   │   ├── ts-analyzer-service.ts
+│   │   │   └── workspace-service.ts
+│   │   ├── types
+│   │   │   ├── progress-reporter.ts
+│   │   │   ├── relevant-info.ts
+│   │   │   ├── symbol-index-with-scores.ts
+│   │   │   └── symbol-index.ts
+│   │   └── utils
+│   │       └── project-analysis.ts
+│   └── test
+│       └── extension.test.ts
+└── tsconfig.json
+```

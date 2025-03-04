@@ -123,7 +123,7 @@ export const DuplicateLogicAnalyzerService = {
    * @returns The path to the duplicate analysis file
    */
   getDuplicateAnalysisPath(rootPath: string): string {
-    return path.join(rootPath, '.cursortest', DUPLICATE_ANALYSIS_FILENAME);
+    return path.join(rootPath, '.cursorcrawl', DUPLICATE_ANALYSIS_FILENAME);
   },
 
   /**
@@ -134,7 +134,7 @@ export const DuplicateLogicAnalyzerService = {
    */
   getTypeSpecificAnalysisPath(rootPath: string, type: string): string {
     const filename = DUPLICATE_ANALYSIS_TYPE_FILENAME.replace('{type}', type);
-    return path.join(rootPath, '.cursortest', filename);
+    return path.join(rootPath, '.cursorcrawl', filename);
   },
 
   /**
@@ -143,7 +143,7 @@ export const DuplicateLogicAnalyzerService = {
    * @returns The parsed codebase context
    */
   async readCodebaseContext(rootPath: string): Promise<CodebaseContext> {
-    const contextPath = path.join(rootPath, '.cursortest', 'codebase-context.json');
+    const contextPath = path.join(rootPath, '.cursorcrawl', 'codebase-context.json');
     
     if (!await fs.pathExists(contextPath)) {
       throw new Error('Codebase context file not found. Please generate it first using the "Generate Codebase Context" command.');
@@ -382,7 +382,7 @@ The output format must be a JSON object with a "results" array containing EXACTL
    * @returns The path to the written file
    */
   async writeResults(rootPath: string, results: DuplicateLogicOutput, filename?: string): Promise<string> {
-    const outputPath = path.join(rootPath, '.cursortest', filename || DUPLICATE_ANALYSIS_FILENAME);
+    const outputPath = path.join(rootPath, '.cursorcrawl', filename || DUPLICATE_ANALYSIS_FILENAME);
     
     // Ensure the directory exists
     await fs.ensureDir(path.dirname(outputPath));

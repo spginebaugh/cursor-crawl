@@ -65,10 +65,10 @@ export const registerAnalyzeDuplicateLogicCommand = (context: vscode.ExtensionCo
                     progress.report({ message: 'Analysis complete.' });
                     
                     // Find all the type-specific JSON files
-                    const cursorTestDir = path.join(rootPath, '.cursortest');
-                    const typeFiles = (await fs.readdir(cursorTestDir))
+                    const cursorCrawlDir = path.join(rootPath, '.cursorcrawl');
+                    const typeFiles = (await fs.readdir(cursorCrawlDir))
                         .filter(file => file.startsWith('duplicate-analysis-') && file.endsWith('.json'))
-                        .map(file => path.join(cursorTestDir, file));
+                        .map(file => path.join(cursorCrawlDir, file));
                     
                     // Create a summary message
                     let summaryMessage = `Duplicate logic analysis completed successfully.\n\n`;

@@ -14,7 +14,7 @@ import { ProgressReporter, adaptVSCodeProgress } from '@/shared/types/progress-r
 import { FileIoService } from './file-io-service';
 
 // Output directory and file for the symbol index
-const OUTPUT_DIR = '.cursortest';
+const OUTPUT_DIR = '.cursorcrawl';
 const OUTPUT_FILE = 'symbol-index.json';
 
 /**
@@ -216,8 +216,8 @@ export const generateDocstringsUnified = async (
   mode: DocstringGenerationMode = DocstringGenerationMode.GENERATE_ALL
 ): Promise<void> => {
   try {
-    // Ensure .cursortest directory exists
-    await WorkspaceService.ensureCursorTestDir(rootPath);
+    // Ensure .cursorcrawl directory exists
+    await WorkspaceService.ensureCursorCrawlDir(rootPath);
     
     // Check if symbol-index.json exists and load it
     const symbolIndex = await SymbolIndexService.getSymbolIndexOrThrow(

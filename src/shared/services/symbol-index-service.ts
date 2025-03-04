@@ -16,7 +16,7 @@ export const SymbolIndexService = {
    * @returns The path to the symbol index file
    */
   getSymbolIndexPath(rootPath: string): string {
-    return path.join(rootPath, '.cursortest', SYMBOL_INDEX_FILENAME);
+    return path.join(rootPath, '.cursorcrawl', SYMBOL_INDEX_FILENAME);
   },
 
   /**
@@ -47,7 +47,7 @@ export const SymbolIndexService = {
    */
   async writeSymbolIndex(rootPath: string, symbolIndex: SymbolIndex): Promise<void> {
     try {
-      await WorkspaceService.ensureCursorTestDir(rootPath);
+      await WorkspaceService.ensureCursorCrawlDir(rootPath);
       const indexPath = this.getSymbolIndexPath(rootPath);
       await fs.writeJson(indexPath, symbolIndex, { spaces: 2 });
       console.log(`Symbol index written to ${indexPath}`);

@@ -53,7 +53,7 @@ export const CodebaseContextService = {
    * @returns The path to the codebase context file
    */
   getCodebaseContextPath(rootPath: string): string {
-    return path.join(rootPath, '.cursortest', CODEBASE_CONTEXT_FILENAME);
+    return path.join(rootPath, '.cursorcrawl', CODEBASE_CONTEXT_FILENAME);
   },
 
   /**
@@ -108,7 +108,7 @@ export const CodebaseContextService = {
    * @returns The path to the written file
    */
   async writeCodebaseContext(rootPath: string, codebaseContext: CodebaseContext): Promise<string> {
-    return WorkspaceService.writeCursorTestFile(rootPath, CODEBASE_CONTEXT_FILENAME, codebaseContext);
+    return WorkspaceService.writeCursorCrawlFile(rootPath, CODEBASE_CONTEXT_FILENAME, codebaseContext);
   },
 
   /**

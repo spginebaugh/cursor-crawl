@@ -31,11 +31,11 @@ export const MergeJsonService = {
    * @returns The paths to the source and output files
    */
   getFilePaths(rootPath: string) {
-    const cursorTestDir = WorkspaceService.getCursorTestDir(rootPath);
+    const cursorCrawlDir = WorkspaceService.getCursorCrawlDir(rootPath);
     return {
-      symbolIndexPath: path.join(cursorTestDir, SYMBOL_INDEX_FILENAME),
-      duplicateAnalysisPath: path.join(cursorTestDir, DUPLICATE_ANALYSIS_FILENAME),
-      mergedJsonPath: path.join(cursorTestDir, MERGED_JSON_FILENAME)
+      symbolIndexPath: path.join(cursorCrawlDir, SYMBOL_INDEX_FILENAME),
+      duplicateAnalysisPath: path.join(cursorCrawlDir, DUPLICATE_ANALYSIS_FILENAME),
+      mergedJsonPath: path.join(cursorCrawlDir, MERGED_JSON_FILENAME)
     };
   },
 

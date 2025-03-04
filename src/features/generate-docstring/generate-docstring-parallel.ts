@@ -269,8 +269,8 @@ export async function generateDocstringsParallel(
   mode: DocstringGenerationMode = DocstringGenerationMode.GENERATE_ALL
 ): Promise<boolean> {
   try {
-    // Ensure .cursortest directory exists
-    await WorkspaceService.ensureCursorTestDir(rootPath);
+    // Ensure .cursorcrawl directory exists
+    await WorkspaceService.ensureCursorCrawlDir(rootPath);
     
     // Check if symbol-index.json exists and load it
     const symbolIndex = await SymbolIndexService.getSymbolIndexOrThrow(

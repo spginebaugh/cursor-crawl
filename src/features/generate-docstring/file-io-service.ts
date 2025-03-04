@@ -4,7 +4,7 @@ import { SymbolIndex } from '@/shared/types/symbol-index';
 import { SymbolIndexService } from '@/shared/services/symbol-index-service';
 
 // Output directory and file for the symbol index
-const OUTPUT_DIR = '.cursortest';
+const OUTPUT_DIR = '.cursorcrawl';
 const OUTPUT_FILE = 'symbol-index.json';
 
 /**

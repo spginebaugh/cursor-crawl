@@ -67,7 +67,7 @@ export const executeContextExtraction = async (
     await RelevantInfoService.generateRelevantInfo(workspaceFolder, contextFiles);
     
     // Get path to the generated file
-    const relevantInfoPath = path.join(WorkspaceService.getCursorTestDir(workspaceFolder), 'relevant-info.json');
+    const relevantInfoPath = path.join(WorkspaceService.getCursorCrawlDir(workspaceFolder), 'relevant-info.json');
     
     return {
       success: true,

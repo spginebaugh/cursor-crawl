@@ -9,7 +9,7 @@ import { OpenAiService } from '@/shared/services/openai-service';
  */
 export interface ProjectInitResult {
   rootPath: string;
-  cursorTestDir: string;
+  cursorCrawlDir: string;
   ignoredPatterns: string[];
   openAiKey?: string;
 }
@@ -38,8 +38,8 @@ export const ProjectService = {
       throw new Error('No workspace folder found. Please open a folder first.');
     }
 
-    // Ensure the .cursortest directory exists
-    const cursorTestDir = await WorkspaceService.ensureCursorTestDir(rootPath);
+    // Ensure the .cursorcrawl directory exists
+    const cursorCrawlDir = await WorkspaceService.ensureCursorCrawlDir(rootPath);
 
     // Parse .gitignore patterns
     const ignoredPatterns = await FileSystemService.parseGitignore(rootPath);
@@ -47,7 +47,7 @@ export const ProjectService = {
     // Initialize result object
     const result: ProjectInitResult = {
       rootPath,
-      cursorTestDir,
+      cursorCrawlDir,
       ignoredPatterns,
     };
 

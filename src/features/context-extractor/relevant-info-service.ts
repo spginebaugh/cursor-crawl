@@ -18,7 +18,7 @@ export const RelevantInfoService = {
    * @returns The path to the relevant info file
    */
   getRelevantInfoPath(rootPath: string): string {
-    return path.join(rootPath, '.cursortest', 'relevant-info.json');
+    return path.join(rootPath, '.cursorcrawl', 'relevant-info.json');
   },
 
   /**
@@ -49,7 +49,7 @@ export const RelevantInfoService = {
    */
   async writeRelevantInfo(rootPath: string, relevantInfo: RelevantInfo): Promise<void> {
     try {
-      await WorkspaceService.ensureCursorTestDir(rootPath);
+      await WorkspaceService.ensureCursorCrawlDir(rootPath);
       const infoPath = this.getRelevantInfoPath(rootPath);
       await fs.writeFile(infoPath, JSON.stringify(relevantInfo, null, 2), 'utf8');
     } catch (error) {
