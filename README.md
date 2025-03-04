@@ -103,12 +103,12 @@ Build Symbol Index (No Docstrings) --> Generate Docstrings for Symbol Index --> 
 
 ## To do:
 - visualizations
-- try gemini
 - improve user interface and config
 - intellegent.cursor/rules generation
 - add linter-like functionality
 - use SQlite or some other database instead of json for storage of symbol index
 - add gemini support for codebases with codebase-context.json of >200K tokens
+- try Qodo-Embed-1 for huge codebases
 - file and directory level summaries for full tree
 - bi-directional context writing
 - cyclomatic complexity
