@@ -56,6 +56,7 @@ As a proof of concept, this extension enables users to create detailed LLM-gener
 - Builds symbol index 
 - Then uses openai to generate detailed docstrings
 - Uses flattened docstrings json as input to LLM to detect likely repeated constructs
+- Ranks all constructs on a scale of 1-5 on how likely they are to be repeated elsewhere in the codebase
 - Visualization of codebase
 
 ![zoom_out_graph](./images/zoom_out_graph.png)
