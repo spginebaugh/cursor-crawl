@@ -7,8 +7,6 @@ CursorCrawl is a VSCode extension built to;
 
 This entire app was built in 24 hours during the GauntletAI Hackathon (8AM 2025-02-28 through 8AM 2025-03-01)
 
-I am writing this README at ~2am, so expect spelling errors.
-
 ## Motivation
 Current coding tools are made for humans. However, with the advent and continuous improvement of LLMs, and the development of tools like Cursor, Windsurf, Cline, and many others, code will be primarily written -- and read -- by AI. 
 
